@@ -52,6 +52,9 @@ interface Snapshot {
   scale: Project["scale"];
 }
 
+// Ghost notes shown by hover-preview (not persisted).
+export interface PreviewNote { pitch: number; start: number; length: number }
+
 interface State {
   project: Project | null;
   selectedIds: Set<string>;
@@ -59,6 +62,7 @@ interface State {
   isPlaying: boolean;
   playheadBeat: number;
   hoverPitch: number | null;
+  previewNotes: PreviewNote[];
   past: Snapshot[];
   future: Snapshot[];
 }
@@ -91,6 +95,11 @@ interface Actions {
   setPlaying: (playing: boolean) => void;
   setPlayhead: (beat: number) => void;
   setHoverPitch: (pitch: number | null) => void;
+  setPreview: (notes: PreviewNote[]) => void;
+  clearPreview: () => void;
+
+  // Reassign every selected note to a different voice.
+  moveSelectedToVoice: (voiceId: string) => void;
 
   undo: () => void;
   redo: () => void;
@@ -129,6 +138,7 @@ export const useStore = create<State & Actions>((set, get) => {
     isPlaying: false,
     playheadBeat: 0,
     hoverPitch: null,
+    previewNotes: [],
     past: [],
     future: [],
 
@@ -139,6 +149,7 @@ export const useStore = create<State & Actions>((set, get) => {
       past: [],
       future: [],
       playheadBeat: 0,
+      previewNotes: [],
     }),
 
     setName:  (name)  => mutate((p) => { p.name = name; }, { history: false }),
@@ -215,6 +226,14 @@ export const useStore = create<State & Actions>((set, get) => {
         p.notes = p.notes.map((n) => ids.has(n.id) ? { ...n, start: Math.max(0, n.start + beats) } : n);
       });
     },
+    moveSelectedToVoice: (voiceId) => {
+      const ids = get().selectedIds;
+      if (ids.size === 0) return;
+      mutate((p) => {
+        if (!p.voices.some((v) => v.id === voiceId)) return;
+        p.notes = p.notes.map((n) => ids.has(n.id) ? { ...n, voiceId } : n);
+      });
+    },
 
     setSelected: (ids) => set({ selectedIds: new Set(ids) }),
     toggleSelected: (id, additive) => set((s) => {
@@ -228,6 +247,8 @@ export const useStore = create<State & Actions>((set, get) => {
     setPlaying: (playing) => set({ isPlaying: playing }),
     setPlayhead: (beat) => set({ playheadBeat: beat }),
     setHoverPitch: (pitch) => set({ hoverPitch: pitch }),
+    setPreview: (notes) => set({ previewNotes: notes }),
+    clearPreview: () => set((s) => s.previewNotes.length === 0 ? s : { previewNotes: [] }),
 
     undo: () => {
       const { past, project } = get();

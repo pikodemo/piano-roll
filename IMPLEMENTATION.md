@@ -84,6 +84,32 @@ above/below each selected note. If a project scale is set,
 in-scale neighbor (within ±2 semitones) so a "min3 ↑" on a B in A-minor lands
 on D, not on C#.
 
+## Stack chord (multi-select)
+
+When 2+ notes are selected, the inspector shows a **Stack chord** row. Each
+button (`maj`, `m`, `7`, `maj7`, `m7`, `sus4`, `dim`, plus `diatonic` if a
+scale is set) treats every selected note as a root and adds the chord-tones
+*above* it at the same start/length. `diatonic` resolves to the actual
+diatonic triad rooted at that scale degree (e.g. on the 4th degree of D
+major, the button adds G + B above the existing G — i.e. nothing new on the
+root, the major-3rd, and the perfect-5th of G major).
+
+## Ghost-note preview
+
+`previewNotes: PreviewNote[]` lives on the store as transient (non-persisted)
+state. The piano roll renders them as dashed low-opacity rectangles. Inspector
+buttons set the preview on `pointerenter` and clear it on `pointerleave`
+(via the `useHoverPreview` helper). The single-note chord cycler keeps the
+preview live for the chord currently selected in the cycler (so `[` and `]`
+are visualized immediately even without hovering).
+
+## Move to voice
+
+`moveSelectedToVoice(voiceId)` reassigns every selected note's `voiceId` and
+goes through the standard `mutate` path — meaning undo, autosave, and the
+voice-color render all update naturally. The Inspector exposes a "Move to"
+row of voice chips when 1+ notes are selected and the project has 2+ voices.
+
 ## Audio
 
 Plain Web Audio: a triangle oscillator + a small linear-ramp envelope per

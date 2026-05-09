@@ -2,22 +2,62 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
+import type { Note } from "@/lib/types";
 import {
+  CHORD_LABELS,
   HARMONY_INTERVALS,
   chordLabel,
+  chordOffsetsAbove,
   chordVoicing,
   chordsContaining,
+  diatonicChordAt,
   midiToName,
   snapToScale,
   type Chord,
+  type ChordQuality,
 } from "@/lib/music";
 import { playNote, scheduleNotes } from "@/lib/audio";
+
+// Hook helpers for setting/clearing the ghost preview on hover.
+function useHoverPreview() {
+  const setPreview = useStore((s) => s.setPreview);
+  const clearPreview = useStore((s) => s.clearPreview);
+  return (compute: () => Array<{ pitch: number; start: number; length: number }>) => ({
+    onPointerEnter: () => setPreview(compute()),
+    onPointerLeave: () => clearPreview(),
+    onFocus: () => setPreview(compute()),
+    onBlur: () => clearPreview(),
+  });
+}
+
+// Stack-chord quality choices used in single-note "Add chord" and multi-note
+// "Stack chord" controls.
+const STACK_QUALITIES: ChordQuality[] = ["maj", "min", "7", "maj7", "min7", "sus4", "dim"];
+
+// Compute the chord-tone pitches to stack on top of `rootMidi`. If the user
+// asked for "diatonic" and a scale is set, use the diatonic triad rooted at
+// that pitch; otherwise add the literal chord-tone offsets above the root.
+// Returns an empty array when nothing should be added (e.g. diatonic on a
+// non-scale tone).
+function stackPitches(
+  rootMidi: number,
+  quality: ChordQuality | "diatonic",
+  scale: ReturnType<typeof useStore.getState>["project"] extends infer P
+    ? P extends { scale: infer S } ? S : never
+    : never,
+): number[] {
+  if (quality === "diatonic") {
+    if (!scale) return [];
+    const chord = diatonicChordAt(rootMidi, scale);
+    if (!chord) return [];
+    return chordVoicing(chord, rootMidi).filter((m) => m !== rootMidi);
+  }
+  return chordOffsetsAbove(quality).map((o) => rootMidi + o);
+}
 
 export function Inspector() {
   const project = useStore((s) => s.project);
   const selected = useStore((s) => s.selectedIds);
-  const activeVoiceId = useStore((s) => s.activeVoiceId);
-  const addNotes = useStore((s) => s.addNotes);
   const deleteNotes = useStore((s) => s.deleteNotes);
 
   const selectedNotes = useMemo(
@@ -32,22 +72,23 @@ export function Inspector() {
     <div className="border-t border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
       {selectedNotes.length === 0 ? (
         <div className="text-gray-500">
-          Click in the grid to add a note. Drag to extend. Shift-drag to marquee-select.
+          Click in the grid to add a note. Drag to extend. Shift-drag for marquee-select; Shift-click toggles a note in/out of the selection.
           ↑/↓ transpose. ←/→ nudge. Backspace deletes. Space plays.
         </div>
       ) : single ? (
-        <div>
-          {/* `key` remounts the cycler when the selected note changes. */}
-          <SingleNoteInspector key={single.id} />
-          <div className="mt-2">
-            <DeleteSelectedButton />
-          </div>
+        <div className="flex flex-col gap-2">
+          <SingleNoteInspector key={single.id} note={single} />
+          <BulkActions notes={selectedNotes} />
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-gray-400">{selectedNotes.length} notes selected</span>
-          <HarmonizeRow />
-          <DeleteSelectedButton />
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="font-semibold text-gray-300">{selectedNotes.length} notes selected</span>
+            <DeleteSelectedButton />
+            <MoveToVoice />
+          </div>
+          <StackChordRow notes={selectedNotes} />
+          <HarmonizeRow notes={selectedNotes} />
         </div>
       )}
     </div>
@@ -65,45 +106,152 @@ export function Inspector() {
       </button>
     );
   }
+}
 
-  function HarmonizeRow() {
-    const scale = project!.scale;
-    return (
-      <div className="flex flex-wrap items-center gap-1">
-        <span className="text-gray-400">Harmonize</span>
-        {(Object.entries(HARMONY_INTERVALS) as Array<[string, number]>).map(([label, semis]) => (
+// Used in single-note mode to host the Delete + Move-to-voice buttons.
+function BulkActions({ notes }: { notes: Note[] }) {
+  const deleteNotes = useStore((s) => s.deleteNotes);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        onClick={() => deleteNotes(notes.map((n) => n.id))}
+        className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500"
+        title="Delete selected (Backspace)"
+      >
+        Delete{notes.length > 1 ? ` ${notes.length}` : ""}
+        <span className="ml-1 text-red-200/80">⌫</span>
+      </button>
+      <MoveToVoice />
+    </div>
+  );
+}
+
+function MoveToVoice() {
+  const project = useStore((s) => s.project)!;
+  const selected = useStore((s) => s.selectedIds);
+  const moveSelectedToVoice = useStore((s) => s.moveSelectedToVoice);
+  if (selected.size === 0 || project.voices.length <= 1) return null;
+  return (
+    <div className="flex items-center gap-1 text-xs">
+      <span className="text-gray-400">Move to</span>
+      {project.voices.map((v) => (
+        <button
+          key={v.id}
+          onClick={() => moveSelectedToVoice(v.id)}
+          className="flex items-center gap-1 rounded bg-gray-800 px-2 py-1 hover:bg-gray-700"
+          title={`Reassign selected notes to ${v.name}`}
+        >
+          <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: v.color }} />
+          <span>{v.name}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function HarmonizeRow({ notes }: { notes: Note[] }) {
+  const project = useStore((s) => s.project)!;
+  const activeVoiceId = useStore((s) => s.activeVoiceId);
+  const addNotes = useStore((s) => s.addNotes);
+  const hover = useHoverPreview();
+  const scale = project.scale;
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <span className="text-gray-400">Harmonize</span>
+      {(Object.entries(HARMONY_INTERVALS) as Array<[string, number]>).map(([label, semis]) => {
+        const previewFor = () => notes.map((n) => ({
+          pitch: snapToScale(n.pitch, semis, scale),
+          start: n.start,
+          length: n.length,
+        }));
+        return (
           <button
             key={label}
             onClick={() => {
               if (!activeVoiceId) return;
-              const created = selectedNotes.map((n) => ({
+              const created = notes.map((n) => ({
                 voiceId: activeVoiceId,
                 pitch: snapToScale(n.pitch, semis, scale),
                 start: n.start,
                 length: n.length,
                 velocity: n.velocity,
               }));
-              const notes = addNotes(created);
-              for (const n of notes) playNote(n.pitch, 0.2);
+              const added = addNotes(created);
+              for (const n of added) playNote(n.pitch, 0.2);
             }}
             className="rounded bg-gray-800 px-2 py-1 text-xs hover:bg-gray-700"
-            title={`Add a voice ${label} from the selection`}
+            title={`Add a voice ${label} from each selected note`}
+            {...hover(previewFor)}
           >
             {label}
           </button>
-        ))}
-      </div>
-    );
-  }
+        );
+      })}
+    </div>
+  );
 }
 
-function SingleNoteInspector() {
+// Multi-note stack-chord row: builds a chord rooted on each selected note.
+function StackChordRow({ notes }: { notes: Note[] }) {
   const project = useStore((s) => s.project)!;
-  const selected = useStore((s) => s.selectedIds);
-  const note = project.notes.find((n) => selected.has(n.id))!;
+  const activeVoiceId = useStore((s) => s.activeVoiceId);
+  const addNotes = useStore((s) => s.addNotes);
+  const hover = useHoverPreview();
+  const scale = project.scale;
+
+  const choices: Array<{ key: ChordQuality | "diatonic"; label: string }> = [
+    ...(scale ? [{ key: "diatonic" as const, label: "diatonic" }] : []),
+    ...STACK_QUALITIES.map((q) => ({ key: q, label: CHORD_LABELS[q] || "maj" })),
+  ];
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <span className="text-gray-400">
+        Stack chord <span className="text-xs text-gray-500">(rooted on each selected note)</span>
+      </span>
+      {choices.map(({ key, label }) => {
+        const previewFor = () => notes.flatMap((n) =>
+          stackPitches(n.pitch, key, scale).map((pitch) => ({ pitch, start: n.start, length: n.length })),
+        );
+        return (
+          <button
+            key={key}
+            onClick={() => {
+              if (!activeVoiceId) return;
+              const newNotes = notes.flatMap((n) =>
+                stackPitches(n.pitch, key, scale).map((pitch) => ({
+                  voiceId: activeVoiceId,
+                  pitch,
+                  start: n.start,
+                  length: n.length,
+                  velocity: n.velocity,
+                })),
+              );
+              if (newNotes.length === 0) return;
+              const added = addNotes(newNotes);
+              const events = added.map((a) => ({ midi: a.pitch, startBeat: 0, lengthBeat: 0.4, velocity: 0.5 }));
+              scheduleNotes(events, 240);
+            }}
+            className="rounded bg-gray-800 px-2 py-1 text-xs hover:bg-gray-700"
+            title={key === "diatonic" ? "Add the diatonic triad on each selected note" : `Add a ${key} chord rooted on each selected note`}
+            {...hover(previewFor)}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SingleNoteInspector({ note }: { note: Note }) {
+  const project = useStore((s) => s.project)!;
   const activeVoiceId = useStore((s) => s.activeVoiceId);
   const addNotes = useStore((s) => s.addNotes);
   const setSelected = useStore((s) => s.setSelected);
+  const setPreview = useStore((s) => s.setPreview);
+  const clearPreview = useStore((s) => s.clearPreview);
+  const hover = useHoverPreview();
 
   const chords = useMemo(() => chordsContaining(note.pitch), [note.pitch]);
   const [idx, setIdx] = useState(0);
@@ -114,16 +262,25 @@ function SingleNoteInspector() {
     [chord, note.pitch],
   );
 
-  // Preview the chord audibly when it changes.
+  // Audible preview when the chord changes.
   useEffect(() => {
     if (!chord || voicing.length === 0) return;
     const events = voicing.map((midi) => ({ midi, startBeat: 0, lengthBeat: 1, velocity: 0.5 }));
     scheduleNotes(events, 240);
   }, [chord, voicing]);
 
+  // Visual preview: while the cycler shows a chord, ghost the chord tones
+  // that would actually get added (skip the existing root note).
+  useEffect(() => {
+    if (!chord) { clearPreview(); return; }
+    setPreview(
+      voicing.filter((m) => m !== note.pitch).map((m) => ({ pitch: m, start: note.start, length: note.length })),
+    );
+    return () => clearPreview();
+  }, [chord, voicing, note.pitch, note.start, note.length, setPreview, clearPreview]);
+
   function commit() {
     if (!chord || !activeVoiceId) return;
-    // Add chord tones (skip the existing pitch).
     const newNotes = voicing
       .filter((m) => m !== note.pitch)
       .map((m) => ({
@@ -180,26 +337,33 @@ function SingleNoteInspector() {
       <div className="ml-auto">
         <div className="text-gray-400">Harmonize</div>
         <div className="mt-1 flex flex-wrap gap-1">
-          {(Object.entries(HARMONY_INTERVALS) as Array<[string, number]>).map(([label, semis]) => (
-            <button
-              key={label}
-              onClick={() => {
-                if (!activeVoiceId) return;
-                const newNotes = [{
-                  voiceId: activeVoiceId,
-                  pitch: snapToScale(note.pitch, semis, project.scale),
-                  start: note.start,
-                  length: note.length,
-                  velocity: note.velocity,
-                }];
-                const created = addNotes(newNotes);
-                for (const n of created) playNote(n.pitch, 0.2);
-              }}
-              className="rounded bg-gray-800 px-2 py-1 text-xs hover:bg-gray-700"
-            >
-              {label}
-            </button>
-          ))}
+          {(Object.entries(HARMONY_INTERVALS) as Array<[string, number]>).map(([label, semis]) => {
+            const previewFor = () => [{
+              pitch: snapToScale(note.pitch, semis, project.scale),
+              start: note.start,
+              length: note.length,
+            }];
+            return (
+              <button
+                key={label}
+                onClick={() => {
+                  if (!activeVoiceId) return;
+                  const created = addNotes([{
+                    voiceId: activeVoiceId,
+                    pitch: snapToScale(note.pitch, semis, project.scale),
+                    start: note.start,
+                    length: note.length,
+                    velocity: note.velocity,
+                  }]);
+                  for (const n of created) playNote(n.pitch, 0.2);
+                }}
+                className="rounded bg-gray-800 px-2 py-1 text-xs hover:bg-gray-700"
+                {...hover(previewFor)}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

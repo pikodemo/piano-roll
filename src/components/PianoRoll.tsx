@@ -24,6 +24,7 @@ export function PianoRoll() {
   const activeVoiceId = useStore((s) => s.activeVoiceId);
   const playheadBeat = useStore((s) => s.playheadBeat);
   const isPlaying = useStore((s) => s.isPlaying);
+  const previewNotes = useStore((s) => s.previewNotes);
   const addNote = useStore((s) => s.addNote);
   const updateNote = useStore((s) => s.updateNote);
   const updateNotes = useStore((s) => s.updateNotes);
@@ -128,24 +129,26 @@ export function PianoRoll() {
       const noteX1 = beatToPx(note.start + note.length);
       const isResize = x >= noteX1 - RESIZE_PX;
 
-      // Selection update.
-      if (!selected.has(noteId)) {
-        if (e.shiftKey) toggleSelected(noteId, true);
-        else setSelected([noteId]);
+      // Shift-click is purely a selection toggle — never starts a drag, so the
+      // user can deselect a note from a multi-selection without moving it.
+      if (e.shiftKey) {
+        toggleSelected(noteId, true);
+        return;
       }
+      // No shift: clicking an unselected note replaces selection; clicking an
+      // already-selected note keeps the selection (so you can drag the group).
+      if (!selected.has(noteId)) setSelected([noteId]);
 
       gridSvgRef.current.setPointerCapture(e.pointerId);
       if (isResize) {
         setDrag({ kind: "resize", id: noteId, startBeat: pxToBeat(x), origLength: note.length });
       } else {
-        // Move all currently selected notes.
         const ids = selected.has(noteId) ? Array.from(selected) : [noteId];
         const origNotes = new Map<string, { start: number; pitch: number }>();
         for (const n of project!.notes) {
           if (ids.includes(n.id)) origNotes.set(n.id, { start: n.start, pitch: n.pitch });
         }
         setDrag({ kind: "move", ids, startBeat: pxToBeat(x), startPitch: pxToPitch(y), origNotes });
-        // Audible click of the moved note.
         playNote(note.pitch, 0.15, { velocity: note.velocity });
       }
       return;
@@ -314,6 +317,24 @@ export function PianoRoll() {
               </g>
             );
           })}
+          {/* Ghost preview notes */}
+          {previewNotes.map((n, i) => (
+            <rect
+              key={`ghost-${i}`}
+              x={beatToPx(n.start)}
+              y={pitchToPx(n.pitch)}
+              width={Math.max(2, beatToPx(n.length))}
+              height={view.rowHeight - 1}
+              fill="#e5e7eb"
+              fillOpacity={0.18}
+              stroke="#e5e7eb"
+              strokeOpacity={0.7}
+              strokeWidth={1}
+              strokeDasharray="3 2"
+              rx={2}
+              pointerEvents="none"
+            />
+          ))}
           {/* Marquee */}
           {drag?.kind === "marquee" && (
             <rect

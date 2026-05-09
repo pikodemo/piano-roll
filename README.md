@@ -35,6 +35,15 @@ node scripts/smoke.mjs   # headless playwright smoke test (needs `npm run dev`)
   synth.
 - Select one or more notes and use **Harmonize** to add a voice a 3rd / 5th /
   6th / octave above or below — snapped to the working scale if one is set.
+- With 2+ notes selected, **Stack chord** adds chord tones above each selected
+  note (treating it as the chord root). Choose a quality — maj / min / 7 /
+  maj7 / m7 / sus4 / dim — or `diatonic` to use the diatonic triad rooted on
+  each note when a scale is set.
+- Hovering any chord/harmonize button shows a **dashed ghost preview** of
+  the notes that would be added.
+- The chord cycler shows ghost notes for the chord currently in view.
+- **Move to** lets you reassign the selected notes to a different voice with
+  one click.
 - A red **Delete** button appears in the inspector when notes are selected
   (Backspace works too).
 - The **Projects** menu in the toolbar lists every saved project, lets you

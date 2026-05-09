@@ -124,10 +124,64 @@ const notesAfterNew = await page.locator("[data-note-id]").count();
 if (notesAfterNew !== 0) fail(`Expected empty grid after New project, got ${notesAfterNew} notes`);
 log("New project: grid is empty");
 
-// Add a note in the new project, then open menu and verify it lists 2 projects.
+// Add a few notes in the new project for the multi-select tests.
 const grid2 = await gridSvg.boundingBox();
 await page.mouse.click(grid2.x + 100, grid2.y + 200);
+await page.waitForTimeout(100);
+await page.mouse.click(grid2.x + 200, grid2.y + 220);
+await page.waitForTimeout(100);
+await page.mouse.click(grid2.x + 300, grid2.y + 240);
 await page.waitForTimeout(150);
+
+// --- Multi-select via marquee (shift-drag on empty area) ---
+await page.mouse.move(grid2.x + 60, grid2.y + 180);
+await page.keyboard.down("Shift");
+await page.mouse.down();
+await page.mouse.move(grid2.x + 360, grid2.y + 260, { steps: 10 });
+await page.mouse.up();
+await page.keyboard.up("Shift");
+await page.waitForTimeout(150);
+let bodyTxt = await page.locator("body").innerText();
+const marqueeMatch = /(\d+)\s+notes selected/.exec(bodyTxt);
+if (!marqueeMatch || Number(marqueeMatch[1]) < 3) fail(`Marquee should select 3 notes, got: ${marqueeMatch?.[0] ?? "no match"}`);
+log(`marquee selected: ${marqueeMatch[0]}`);
+
+// --- Stack chord button + ghost preview while hovering ---
+const majBtn = page.locator("button[title*='maj chord rooted']").first();
+if ((await majBtn.count()) === 0) fail("Stack chord 'maj' button not visible in multi-select inspector");
+// Hover to trigger ghost preview.
+await majBtn.hover();
+await page.waitForTimeout(100);
+const ghostCount = await page.locator("rect[stroke-dasharray]").count();
+if (ghostCount < 6) fail(`Expected ghost notes while hovering Stack chord (>=6), got ${ghostCount}`);
+log(`ghost notes on hover: ${ghostCount}`);
+const beforeStack = await page.locator("[data-note-id]").count();
+await majBtn.click();
+await page.waitForTimeout(150);
+const afterStack = await page.locator("[data-note-id]").count();
+if (afterStack < beforeStack + 6) fail(`Expected stack chord to add >=6 notes (3 selected × 2 chord tones), got ${afterStack - beforeStack}`);
+log(`Stack chord: +${afterStack - beforeStack} notes`);
+
+// --- Move-to-voice ---
+// Add a 2nd voice in the toolbar voice list, then re-select the just-added
+// stack notes and use the Move-to-voice control.
+await page.click("button:has-text('+ Add')");
+await page.waitForTimeout(150);
+// Marquee-select again over the same area.
+await page.mouse.move(grid2.x + 60, grid2.y + 100);
+await page.keyboard.down("Shift");
+await page.mouse.down();
+await page.mouse.move(grid2.x + 400, grid2.y + 320, { steps: 10 });
+await page.mouse.up();
+await page.keyboard.up("Shift");
+await page.waitForTimeout(150);
+const moveBtn = page.locator("button[title^='Reassign selected notes to Voice 2']");
+if ((await moveBtn.count()) === 0) fail("Move-to-voice 'Voice 2' button not visible");
+await moveBtn.first().click();
+await page.waitForTimeout(150);
+log("Move-to-voice clicked");
+
+// --- Reopen the projects menu (it was reset above) so the next checks work ---
 await page.click("button:has-text('Projects')");
 await page.waitForTimeout(150);
 // Items are rows with timestamps; count by the right-side delete buttons.

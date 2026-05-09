@@ -206,6 +206,25 @@ export function chordsContaining(midi: number, opts?: { qualities?: ChordQuality
   return out;
 }
 
+// Chord-stack helper: returns the chord-tone semitone offsets *above* the root
+// (i.e. without the root itself). Useful when stacking a chord on top of an
+// existing melody note that already plays the root.
+export function chordOffsetsAbove(quality: ChordQuality): number[] {
+  return CHORD_INTERVALS[quality].filter((o) => o !== 0);
+}
+
+// Returns the diatonic chord rooted at the given pitch within `scale`, or
+// `null` if the pitch isn't a scale tone. For 7-note diatonic modes we use
+// the triad on that degree; pentatonic / blues scales return null.
+export function diatonicChordAt(rootMidi: number, scale: Scale): Chord | null {
+  const triads = diatonicTriads(scale);
+  if (triads.length === 0) return null;
+  const target = pitchClass(rootMidi);
+  const t = triads.find((x) => x.rootPc === target);
+  if (!t) return null;
+  return { rootPc: t.rootPc, quality: t.quality, inversion: 0 };
+}
+
 // ---------- Interval harmonization ----------
 
 // Chromatic intervals, in semitones, that are commonly useful for harmony.

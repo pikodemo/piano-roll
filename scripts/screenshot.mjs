@@ -21,6 +21,22 @@ const ys = [240, 220, 200, 180, 200, 220, 200, 180];
 for (let i = 0; i < xs.length; i++) await page.mouse.click(box.x + xs[i], box.y + ys[i]);
 await page.waitForTimeout(200);
 
+// Marquee-select first three notes.
+await page.mouse.move(box.x + 60, box.y + 170);
+await page.keyboard.down("Shift");
+await page.mouse.down();
+await page.mouse.move(box.x + 250, box.y + 260, { steps: 10 });
+await page.mouse.up();
+await page.keyboard.up("Shift");
+await page.waitForTimeout(150);
+
+// Hover the maj stack chord button to show ghost notes.
+const majBtn = page.locator("button[title*='maj chord rooted']").first();
+if (await majBtn.count() > 0) {
+  await majBtn.hover();
+  await page.waitForTimeout(150);
+}
+
 await page.screenshot({ path: "/tmp/piano-roll.png", fullPage: false });
 console.log("wrote /tmp/piano-roll.png");
 await browser.close();
