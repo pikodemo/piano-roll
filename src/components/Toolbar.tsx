@@ -8,6 +8,7 @@ import { NOTE_NAMES, midiToName } from "@/lib/music";
 import { ProjectsMenu } from "./ProjectsMenu";
 import { getMIDIAccess, watchDevices, type MIDIDeviceInfo } from "@/lib/midi";
 import { startRecording, type RecordHandle } from "@/lib/audio-capture";
+import { ExportModal } from "./ExportModal";
 
 const SNAP_OPTIONS: Array<{ label: string; value: number }> = [
   { label: "1/1", value: 4 },
@@ -112,6 +113,22 @@ function RecordButton() {
       )}
       {error && <span className="text-xs text-red-400" title={error}>mic err</span>}
     </div>
+  );
+}
+
+function ExportButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="rounded bg-gray-800 px-2 py-1 text-xs hover:bg-gray-700"
+        title="Export to sheet music, guitar tab, or Jianpu"
+      >
+        Export
+      </button>
+      <ExportModal open={open} onClose={() => setOpen(false)} />
+    </>
   );
 }
 
@@ -259,6 +276,7 @@ export function Toolbar() {
       <ProjectsMenu />
       <ToolToggle />
       <RecordButton />
+      <ExportButton />
       <MIDIStatus />
       <button
         onClick={toggle}

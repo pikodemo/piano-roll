@@ -179,6 +179,33 @@ await page.mouse.move(reBox.x + reBox.width - 30, reBox.y + reBox.height - 100, 
 await page.mouse.up();
 await page.waitForTimeout(150);
 
+// --- Export modal: open, switch formats, copy works ---
+await page.click("button[title*='Export']");
+await page.waitForTimeout(150);
+const exportTitle = page.locator("h2", { hasText: "Export" });
+if ((await exportTitle.count()) === 0) fail("Export modal didn't open");
+// Default format = MusicXML; preview should contain the score-partwise tag.
+const previewMusicXML = await page.locator("pre").first().innerText();
+if (!previewMusicXML.includes("score-partwise")) fail(`MusicXML preview missing tag. Got: ${previewMusicXML.slice(0, 300)}`);
+log("export modal: MusicXML preview rendered");
+// Switch to Tab.
+await page.click("input[type=radio] >> nth=1");
+await page.waitForTimeout(120);
+const previewTab = await page.locator("pre").first().innerText();
+if (!/[ABDEGe]\|/.test(previewTab)) fail(`Tab preview missing string lines. Got: ${previewTab.slice(0, 300)}`);
+log("export modal: tab preview rendered");
+// Switch to Jianpu.
+await page.click("input[type=radio] >> nth=2");
+await page.waitForTimeout(120);
+const previewJianpu = await page.locator("pre").first().innerText();
+if (!previewJianpu.includes("Key:")) fail(`Jianpu preview missing key header. Got: ${previewJianpu.slice(0, 300)}`);
+log("export modal: jianpu preview rendered");
+// Close with Escape.
+await page.keyboard.press("Escape");
+await page.waitForTimeout(120);
+if ((await page.locator("h2", { hasText: "Export" }).count()) !== 0) fail("Export modal didn't close on Esc");
+log("export modal: closed on Escape");
+
 // --- Per-voice instrument dropdown ---
 const instSelect = page.locator("select[title='Instrument']").first();
 if ((await instSelect.count()) === 0) fail("Instrument select not visible in the voice list");

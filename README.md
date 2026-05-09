@@ -76,6 +76,12 @@ error instead of a generic failure.
   Editing while scrubbed back creates a new branch automatically; the
   previous tip is preserved as a switchable branch button. Undo / redo go
   through the same tree.
+- The **Export** button in the toolbar opens a modal that converts the
+  selected voices (or just the selected notes) to **MusicXML** (universal
+  sheet music — open in MuseScore et al. for printing/PDF), **ASCII
+  guitar tab** (six-string standard tuning), or **Jianpu** (numbered
+  notation, reads the project's working scale). Preview pane shows the
+  output; Copy or Download.
 
 Everything is auto-saved to IndexedDB.
 
@@ -85,6 +91,7 @@ Everything is auto-saved to IndexedDB.
 - [`PLAN.md`](PLAN.md) — staged delivery plan
 - [`STAGE2_AI.md`](STAGE2_AI.md) — design for the chat agent (next stage)
 - [`IMPLEMENTATION.md`](IMPLEMENTATION.md) — engineering notes for stage 1
+- [`FUTURE.md`](FUTURE.md) — deferred features and refinements
 
 ## Stack
 
