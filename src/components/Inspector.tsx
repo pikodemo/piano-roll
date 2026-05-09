@@ -199,8 +199,10 @@ function StackChordRow({ notes }: { notes: Note[] }) {
   const hover = useHoverPreview();
   const scale = project.scale;
 
+  // Always show the diatonic option so users discover it; disable it (with an
+  // explanatory tooltip) when no working scale is set.
   const choices: Array<{ key: ChordQuality | "diatonic"; label: string }> = [
-    ...(scale ? [{ key: "diatonic" as const, label: "diatonic" }] : []),
+    { key: "diatonic" as const, label: "diatonic" },
     ...STACK_QUALITIES.map((q) => ({ key: q, label: CHORD_LABELS[q] || "maj" })),
   ];
 
@@ -210,12 +212,14 @@ function StackChordRow({ notes }: { notes: Note[] }) {
         Stack chord <span className="text-xs text-gray-500">(rooted on each selected note)</span>
       </span>
       {choices.map(({ key, label }) => {
-        const previewFor = () => notes.flatMap((n) =>
+        const disabled = key === "diatonic" && !scale;
+        const previewFor = () => disabled ? [] : notes.flatMap((n) =>
           stackPitches(n.pitch, key, scale).map((pitch) => ({ pitch, start: n.start, length: n.length })),
         );
         return (
           <button
             key={key}
+            disabled={disabled}
             onClick={() => {
               if (!activeVoiceId) return;
               const newNotes = notes.flatMap((n) =>
@@ -232,8 +236,18 @@ function StackChordRow({ notes }: { notes: Note[] }) {
               const events = added.map((a) => ({ midi: a.pitch, startBeat: 0, lengthBeat: 0.4, velocity: 0.5 }));
               scheduleNotes(events, 240);
             }}
-            className="rounded bg-gray-800 px-2 py-1 text-xs hover:bg-gray-700"
-            title={key === "diatonic" ? "Add the diatonic triad on each selected note" : `Add a ${key} chord rooted on each selected note`}
+            className={
+              disabled
+                ? "rounded bg-gray-900 px-2 py-1 text-xs text-gray-500 cursor-not-allowed"
+                : "rounded bg-gray-800 px-2 py-1 text-xs hover:bg-gray-700"
+            }
+            title={
+              disabled
+                ? "Set a working scale in the toolbar (Scale ▾) to enable diatonic harmonization"
+                : key === "diatonic"
+                ? "Add the diatonic triad rooted on each selected note (degrees of the project scale)"
+                : `Add a ${key} chord rooted on each selected note`
+            }
             {...hover(previewFor)}
           >
             {label}
