@@ -2,10 +2,12 @@
 
 import { useStore } from "@/lib/store";
 import { scheduleNotes } from "@/lib/audio";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ScaleMode } from "@/lib/music";
-import { NOTE_NAMES } from "@/lib/music";
+import { NOTE_NAMES, midiToName } from "@/lib/music";
 import { ProjectsMenu } from "./ProjectsMenu";
+import { getMIDIAccess, watchDevices, type MIDIDeviceInfo } from "@/lib/midi";
+import { startRecording, type RecordHandle } from "@/lib/audio-capture";
 
 const SNAP_OPTIONS: Array<{ label: string; value: number }> = [
   { label: "1/1", value: 4 },
@@ -17,6 +19,127 @@ const SNAP_OPTIONS: Array<{ label: string; value: number }> = [
 ];
 
 const MODES: ScaleMode[] = ["major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "harmonic_minor", "melodic_minor", "minor_pentatonic", "major_pentatonic", "blues"];
+
+function RecordButton() {
+  const project = useStore((s) => s.project);
+  const activeVoiceId = useStore((s) => s.activeVoiceId);
+  const playheadBeat = useStore((s) => s.playheadBeat);
+  const addNotes = useStore((s) => s.addNotes);
+  const setSelected = useStore((s) => s.setSelected);
+
+  const [recording, setRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [livePitch, setLivePitch] = useState<number | null>(null);
+  const handleRef = useRef<RecordHandle | null>(null);
+  const startBeatRef = useRef(0);
+  const tempoRef = useRef(120);
+  const livePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function start() {
+    if (!project || !activeVoiceId) return;
+    setError(null);
+    try {
+      const handle = await startRecording();
+      handleRef.current = handle;
+      // Anchor the recording to the current playhead position so the notes
+      // line up with whatever the user is overdubbing onto.
+      startBeatRef.current = playheadBeat;
+      tempoRef.current = project.tempo;
+      setRecording(true);
+      // Poll the live pitch a few times per second for the UI indicator.
+      livePollRef.current = setInterval(() => {
+        setLivePitch(handle.currentMidi());
+      }, 100);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function stop() {
+    if (!handleRef.current || !project || !activeVoiceId) return;
+    if (livePollRef.current) { clearInterval(livePollRef.current); livePollRef.current = null; }
+    setRecording(false);
+    setLivePitch(null);
+    const { notes: detected } = await handleRef.current.stop();
+    handleRef.current = null;
+    if (detected.length === 0) return;
+    const beatSec = 60 / tempoRef.current;
+    const snap = project.view.snap;
+    const created = detected.map((n) => {
+      const startBeat = startBeatRef.current + n.startSec / beatSec;
+      const lengthBeat = Math.max(snap, n.lengthSec / beatSec);
+      // Snap start to the grid; round so the closest grid line wins (we don't
+      // need the cursor-inside-cell guarantee here, that was a click-time UX
+      // concern).
+      const snappedStart = Math.round(startBeat / snap) * snap;
+      const snappedLength = Math.max(snap, Math.round(lengthBeat / snap) * snap);
+      return {
+        voiceId: activeVoiceId,
+        pitch: n.midi,
+        start: Math.max(0, snappedStart),
+        length: snappedLength,
+        velocity: 0.85,
+      };
+    });
+    const added = addNotes(created);
+    setSelected(added.map((n) => n.id));
+  }
+
+  // Cleanup if the component unmounts mid-recording.
+  useEffect(() => () => {
+    if (livePollRef.current) clearInterval(livePollRef.current);
+    if (handleRef.current) handleRef.current.stop().catch(() => {});
+  }, []);
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={() => recording ? void stop() : void start()}
+        className={
+          recording
+            ? "rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500"
+            : "rounded bg-gray-800 px-3 py-1 text-xs font-semibold text-gray-100 hover:bg-gray-700"
+        }
+        title={recording ? "Stop recording" : "Record from microphone (transcribes pitch to notes in the active voice)"}
+      >
+        <span className={recording ? "inline-block h-2 w-2 rounded-full bg-red-200 mr-1 animate-pulse" : "inline-block h-2 w-2 rounded-full bg-red-500 mr-1"} />
+        {recording ? "Stop" : "Rec"}
+      </button>
+      {recording && (
+        <span className="text-xs text-gray-400 font-mono">
+          {livePitch != null ? midiToName(livePitch) : "—"}
+        </span>
+      )}
+      {error && <span className="text-xs text-red-400" title={error}>mic err</span>}
+    </div>
+  );
+}
+
+function MIDIStatus() {
+  const [devices, setDevices] = useState<MIDIDeviceInfo[]>([]);
+  useEffect(() => {
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const access = await getMIDIAccess();
+      if (!access || cancelled) return;
+      unsub = watchDevices(setDevices);
+    })();
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
+  }, []);
+  if (devices.length === 0) return null;
+  return (
+    <span
+      className="rounded border border-emerald-700 bg-emerald-900/40 px-2 py-0.5 text-xs text-emerald-200"
+      title={devices.map((d) => `${d.name}${d.manufacturer ? ` (${d.manufacturer})` : ""}`).join(", ")}
+    >
+      🎹 {devices.length === 1 ? devices[0].name : `${devices.length} MIDI devices`}
+    </span>
+  );
+}
 
 function ToolToggle() {
   const tool = useStore((s) => s.tool);
@@ -104,13 +227,17 @@ export function Toolbar() {
         if (soloed) return v.soloed;
         return !v.muted;
       })
-      .map((n) => ({
-        midi: n.pitch,
-        startBeat: n.start,
-        lengthBeat: n.length,
-        velocity: n.velocity,
-        instrument: voiceById.get(n.voiceId)?.instrument,
-      }));
+      .map((n) => {
+        const v = voiceById.get(n.voiceId);
+        return {
+          midi: n.pitch,
+          startBeat: n.start,
+          lengthBeat: n.length,
+          velocity: n.velocity,
+          volume: v?.volume ?? 1,
+          instrument: v?.instrument,
+        };
+      });
     if (events.length === 0) return;
     setPlaying(true);
     stopRef.current = scheduleNotes(
@@ -131,6 +258,8 @@ export function Toolbar() {
     <div className="flex flex-wrap items-center gap-3 border-b border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
       <ProjectsMenu />
       <ToolToggle />
+      <RecordButton />
+      <MIDIStatus />
       <button
         onClick={toggle}
         className="rounded bg-blue-600 px-3 py-1 font-semibold hover:bg-blue-500"

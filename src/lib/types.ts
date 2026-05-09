@@ -15,6 +15,7 @@ export interface Voice {
   name: string;
   color: string;     // hex
   instrument: InstrumentId;
+  volume: number;    // 0-1, multiplies note velocity at playback time
   muted: boolean;
   soloed: boolean;
 }

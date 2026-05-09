@@ -136,6 +136,37 @@ goes through the standard `mutate` path — meaning undo, autosave, and the
 voice-color render all update naturally. The Inspector exposes a "Move to"
 row of voice chips when 1+ notes are selected and the project has 2+ voices.
 
+## MIDI input
+
+`src/lib/midi.ts` wraps `navigator.requestMIDIAccess()`. `AppShell` requests
+access on mount, subscribes to messages from every input, and routes note-on
+/ note-off through `playNote` using the active voice's instrument & volume.
+Re-presses cancel any in-flight note for that pitch (a corner the Web MIDI
+spec leaves to the host). The toolbar shows a 🎹 chip with the device name
+when one is connected.
+
+## Microphone capture
+
+`src/lib/audio-capture.ts` opens a `getUserMedia({ audio })` stream into an
+`AnalyserNode` (FFT 2048). On every animation-frame tick:
+
+1. `getFloatTimeDomainData` fills a buffer.
+2. `autoCorrelate` runs the textbook trim-and-autocorrelate pitch detector
+   (limit lag search to 75 Hz – 1500 Hz, parabolic interpolation for
+   sub-sample precision).
+3. The detected frequency is converted to MIDI and pushed onto a sample log.
+
+When recording stops, `postProcess` groups consecutive same-pitch samples
+into notes, requiring a few frames of pitch agreement before committing a
+change (so single-frame harmonic jumps don't segment the note) and dropping
+runs shorter than ~70 ms. The `RecordButton` in the toolbar anchors the
+detected notes at the current playhead beat, converts seconds → beats using
+the project tempo, and snaps to the project grid.
+
+This isn't a polyphonic transcription system — it's a single-line "sing me
+a melody" helper. Stable held pitches transcribe well; fast vibrato or
+glissandi produce lots of short notes you'll want to clean up by hand.
+
 ## Audio
 
 Plain Web Audio: each voice picks an `InstrumentId` (default `triangle`).

@@ -95,6 +95,7 @@ export const ToolSchemas = {
     name: z.string().optional(),
     color: z.string().optional(),
     instrument: InstrumentEnum.optional(),
+    volume: z.number().min(0).max(1).optional().describe("Per-voice volume multiplier 0-1; multiplies note velocity at playback."),
     muted: z.boolean().optional(),
     soloed: z.boolean().optional(),
   }),
@@ -295,6 +296,7 @@ function impl_add_voice(ctx: ToolExecutionContext, input: ToolInput<"add_voice">
     name: input.name ?? `Voice ${idx + 1}`,
     color: input.color ?? VOICE_COLORS[idx % VOICE_COLORS.length],
     instrument: input.instrument ?? "triangle",
+    volume: 1,
     muted: false,
     soloed: false,
   };
@@ -312,6 +314,7 @@ function impl_update_voice(ctx: ToolExecutionContext, input: ToolInput<"update_v
     name: input.name ?? v.name,
     color: input.color ?? v.color,
     instrument: input.instrument ?? v.instrument,
+    volume: input.volume ?? v.volume,
     muted: input.muted ?? v.muted,
     soloed: input.soloed ?? v.soloed,
   } : v);

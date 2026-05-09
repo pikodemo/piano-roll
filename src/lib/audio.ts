@@ -206,19 +206,21 @@ function trigger(
 
 export interface PlayOptions {
   velocity?: number;          // 0-1
+  volume?: number;            // 0-1, scales the final amplitude (per-voice volume)
   instrument?: InstrumentId;  // defaults to "triangle"
 }
 
 // Trigger a single note; returns a cancel function.
 export function playNote(midi: number, durationSec: number, opts: PlayOptions = {}): () => void {
   const c = getCtx();
+  const vel = (opts.velocity ?? 0.8) * (opts.volume ?? 1);
   const handle = trigger(
     c,
     opts.instrument ?? DEFAULT_INSTRUMENT,
     midi,
     c.currentTime + 0.005,
     durationSec,
-    opts.velocity ?? 0.8,
+    vel,
   );
   return handle.stop;
 }
@@ -228,6 +230,7 @@ export interface ScheduledNote {
   startBeat: number;
   lengthBeat: number;
   velocity?: number;
+  volume?: number;
   instrument?: InstrumentId;
 }
 
@@ -249,13 +252,14 @@ export function scheduleNotes(
   for (const ev of events) {
     const t0 = start + ev.startBeat * beatSec;
     const dur = ev.lengthBeat * beatSec;
+    const vel = (ev.velocity ?? 0.8) * (ev.volume ?? 1);
     const handle = trigger(
       c,
       ev.instrument ?? DEFAULT_INSTRUMENT,
       ev.midi,
       t0,
       dur,
-      ev.velocity ?? 0.8,
+      vel,
     );
     handles.push(handle);
     endTime = Math.max(endTime, t0 + dur);

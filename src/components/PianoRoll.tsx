@@ -100,14 +100,27 @@ export function PianoRoll() {
   const contentW = totalBeats * view.pixelsPerBeat;
   const pitchRange = view.maxPitch - view.minPitch + 1;
   const contentH = pitchRange * view.rowHeight;
-  // The instrument used by the keyboard preview, the new-note click sound,
-  // and the move-feedback click — always the active voice's instrument so
-  // the user hears what they're about to play.
-  const activeInstrument = project.voices.find((v) => v.id === activeVoiceId)?.instrument;
+  // The instrument + volume used by the keyboard preview, the new-note click
+  // sound, and the move-feedback click — always the active voice so the user
+  // hears what they're about to play.
+  const activeVoice = project.voices.find((v) => v.id === activeVoiceId);
+  const activeInstrument = activeVoice?.instrument;
+  const activeVolume = activeVoice?.volume ?? 1;
 
+  // Round-snap (nearest grid line). Used for relative motion — drag deltas,
+  // resize amounts — where the user expects symmetric behavior.
   function snap(beat: number): number {
     if (!project) return beat;
     return Math.round(beat / project.view.snap) * project.view.snap;
+  }
+  // Floor-snap (grid line at-or-before). Used for new-note placement so the
+  // cursor always lands inside the cell the note will occupy. With round-snap
+  // a click past the midpoint of a cell would push the note's left edge past
+  // the cursor — making it look like the note "appears to the right of where
+  // I clicked".
+  function snapFloor(beat: number): number {
+    if (!project) return beat;
+    return Math.floor(beat / project.view.snap) * project.view.snap;
   }
 
   function pxToBeat(x: number): number {
@@ -158,7 +171,7 @@ export function PianoRoll() {
         }
         setDrag({ kind: "move", ids, startBeat: pxToBeat(x), startPitch: pxToPitch(y), origNotes });
         const noteVoice = project!.voices.find((v) => v.id === note.voiceId);
-        playNote(note.pitch, 0.15, { velocity: note.velocity, instrument: noteVoice?.instrument });
+        playNote(note.pitch, 0.15, { velocity: note.velocity, instrument: noteVoice?.instrument, volume: noteVoice?.volume });
       }
       return;
     }
@@ -176,13 +189,13 @@ export function PianoRoll() {
     }
 
     if (!activeVoiceId) return;
-    const startBeat = snap(pxToBeat(x));
+    const startBeat = snapFloor(pxToBeat(x));
     const pitch = pxToPitch(y);
     // Default new-note length: 1 beat, but never shorter than the snap.
     const length = Math.max(1, view.snap);
     const note = addNote({ voiceId: activeVoiceId, pitch, start: startBeat, length, velocity: 0.8 });
     setSelected([note.id]);
-    playNote(pitch, 0.2, { velocity: 0.8, instrument: activeInstrument });
+    playNote(pitch, 0.2, { velocity: 0.8, instrument: activeInstrument, volume: activeVolume });
     gridSvgRef.current.setPointerCapture(e.pointerId);
     setDrag({ kind: "create", id: note.id, startBeat, startPitch: pitch });
     setHoverPlace(null);
@@ -206,7 +219,7 @@ export function PianoRoll() {
         if (hoverPlace) setHoverPlace(null);
         return;
       }
-      const startBeat = snap(pxToBeat(x));
+      const startBeat = snapFloor(pxToBeat(x));
       const pitch = pxToPitch(y);
       const length = Math.max(1, view.snap);
       if (!hoverPlace || hoverPlace.start !== startBeat || hoverPlace.pitch !== pitch || hoverPlace.length !== length) {
@@ -299,7 +312,7 @@ export function PianoRoll() {
           maxPitch={view.maxPitch}
           rowHeight={view.rowHeight}
           width={KEYBOARD_W}
-          onPreview={(p) => playNote(p, 0.3, { instrument: activeInstrument })}
+          onPreview={(p) => playNote(p, 0.3, { instrument: activeInstrument, volume: activeVolume })}
         />
       </div>
       {/* Grid */}

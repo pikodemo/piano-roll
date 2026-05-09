@@ -39,7 +39,11 @@ export async function loadProject(id: string): Promise<Project | undefined> {
 function migrate(p: Project): Project {
   return {
     ...p,
-    voices: p.voices.map((v) => ({ ...v, instrument: v.instrument ?? DEFAULT_INSTRUMENT })),
+    voices: p.voices.map((v) => ({
+      ...v,
+      instrument: v.instrument ?? DEFAULT_INSTRUMENT,
+      volume: v.volume ?? 1,
+    })),
   };
 }
 

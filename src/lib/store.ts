@@ -32,7 +32,7 @@ export function makeDefaultProject(): Project {
     bars: 8,
     scale: null,
     voices: [
-      { id: voiceId, name: "Voice 1", color: VOICE_COLORS[0], instrument: DEFAULT_INSTRUMENT, muted: false, soloed: false },
+      { id: voiceId, name: "Voice 1", color: VOICE_COLORS[0], instrument: DEFAULT_INSTRUMENT, volume: 1, muted: false, soloed: false },
     ],
     notes: [],
     view: {
@@ -187,6 +187,10 @@ export const useStore = create<State & Actions>((set, get) => {
       future: [],
       playheadBeat: 0,
       previewNotes: [],
+      // Default to Select mode if the project already has notes — we'd rather
+      // not have a click create a stray note on top of existing material. A
+      // blank canvas opens in Draw so the user can start sketching immediately.
+      tool: p.notes.length > 0 ? "select" : "draw",
     }),
 
     setName:  (name)  => mutate((p) => { p.name = name; }, { history: false }),
@@ -199,7 +203,7 @@ export const useStore = create<State & Actions>((set, get) => {
       const cur = get().project;
       const id = uid();
       const color = VOICE_COLORS[((cur?.voices.length ?? 0)) % VOICE_COLORS.length];
-      const voice: Voice = { id, name: `Voice ${(cur?.voices.length ?? 0) + 1}`, color, instrument: DEFAULT_INSTRUMENT, muted: false, soloed: false };
+      const voice: Voice = { id, name: `Voice ${(cur?.voices.length ?? 0) + 1}`, color, instrument: DEFAULT_INSTRUMENT, volume: 1, muted: false, soloed: false };
       mutate((p) => { p.voices = [...p.voices, voice]; });
       set({ activeVoiceId: id });
       return voice;

@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listProjects, loadProject, saveProject } from "@/lib/storage";
 import { makeDefaultProject, useStore } from "@/lib/store";
+import { getMIDIAccess, subscribe as subscribeMIDI } from "@/lib/midi";
+import { playNote } from "@/lib/audio";
 import { Toolbar } from "./Toolbar";
 import { VoiceList } from "./VoiceList";
 import { PianoRoll } from "./PianoRoll";
@@ -43,6 +45,48 @@ export function AppShell() {
     })();
     return () => { cancelled = true; };
   }, [setProject]);
+
+  // MIDI keyboard input → preview through the active voice's instrument.
+  // We re-read store state inside the message handler so changes to the active
+  // voice or its instrument/volume take effect without re-subscribing.
+  const heldNotesRef = useRef<Map<number, () => void>>(new Map());
+  useEffect(() => {
+    const heldNotes = heldNotesRef.current;
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const access = await getMIDIAccess();
+      if (!access || cancelled) return;
+      unsub = subscribeMIDI((event) => {
+        const s = useStore.getState();
+        const voice = s.project?.voices.find((v) => v.id === s.activeVoiceId);
+        if (event.type === "noteOn") {
+          // Stop any in-flight note for this pitch (re-press without note-off).
+          heldNotes.get(event.note)?.();
+          // Long sustain so the note rings until note-off lands. Most synths
+          // here have ≤1.5s release; 6s is more than enough for a sustained press.
+          const stop = playNote(event.note, 6, {
+            velocity: event.velocity,
+            instrument: voice?.instrument,
+            volume: voice?.volume,
+          });
+          heldNotes.set(event.note, stop);
+        } else {
+          const stop = heldNotes.get(event.note);
+          if (stop) {
+            stop();
+            heldNotes.delete(event.note);
+          }
+        }
+      });
+    })();
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+      for (const stop of heldNotes.values()) stop();
+      heldNotes.clear();
+    };
+  }, []);
 
   if (!ready || !project) {
     return (

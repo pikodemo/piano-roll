@@ -62,6 +62,14 @@ error instead of a generic failure.
 - The **Projects** menu in the toolbar lists every saved project, lets you
   create new ones, switch between them, and delete the ones you don't need.
   Rename via the name field on the right side of the toolbar.
+- **Voices** have a volume slider, instrument dropdown, M/S buttons, and a
+  double-clickable name (Enter saves, Escape cancels).
+- A connected **MIDI keyboard** auto-attaches; pressing keys plays preview
+  through the active voice's instrument. The toolbar shows the device name.
+- The **Rec** button records audio from your microphone, runs a pitch
+  detector, and adds the resulting notes to the active voice (anchored at
+  the playhead, snapped to the grid). Sing a melody, click Stop, the notes
+  appear.
 
 Everything is auto-saved to IndexedDB.
 
