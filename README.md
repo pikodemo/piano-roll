@@ -33,7 +33,8 @@ node scripts/smoke.mjs   # headless playwright smoke test (needs `npm run dev`)
 - **Space** plays / stops. Tempo, bar count, snap, and a working scale live in
   the toolbar.
 - Add a **voice** (track) from the Voices row; the active voice is what new
-  notes go into. Mute / solo / delete per voice.
+  notes go into. Each voice has its own **instrument** (Triangle / Sine /
+  Saw / Square / Pluck / Bass / Pad / Bell), mute, solo, and delete.
 - Select a single note to open the **chord cycler**: `[` / `]` cycles through
   every chord that contains the note (major / minor / 7th / sus / inversions);
   **Enter** commits the chord. The previewed chord is auditioned through the

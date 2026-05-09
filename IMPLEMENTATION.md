@@ -134,11 +134,29 @@ row of voice chips when 1+ notes are selected and the project has 2+ voices.
 
 ## Audio
 
-Plain Web Audio: a triangle oscillator + a small linear-ramp envelope per
-note, summed straight to `destination`. `scheduleNotes` schedules every event
-ahead of time using `AudioContext.currentTime`, returns a stop function, and
-runs a `requestAnimationFrame` loop to update the playhead beat in the store.
-Cheap, no library needed, good enough to audition arrangements.
+Plain Web Audio: each voice picks an `InstrumentId` (default `triangle`).
+Synthesis is hand-rolled per instrument:
+
+- `triangle` / `sine` / `saw` / `square` — single oscillator + linear ADSR.
+- `pluck` — triangle through a low-pass, exponential decay, no sustain
+  (decay length is independent of the note duration so short notes still ring).
+- `bass` — square wave one octave down, low-pass-filtered for fatness.
+- `pad` — four detuned saws + lowpass + slow attack/release; attack is
+  capped at 0.3s but never longer than half the note duration.
+- `bell` — sine carrier FM-modulated by a sine at a 3:1 ratio, exponential
+  decay (1s minimum so it actually rings).
+
+`playNote(midi, dur, { instrument, velocity })` triggers a one-shot voice;
+`scheduleNotes(events, bpm, …)` schedules a list of (`midi`, `startBeat`,
+`lengthBeat`, `instrument`, `velocity`) events using
+`AudioContext.currentTime` and runs a `requestAnimationFrame` loop to update
+the playhead beat in the store.
+
+Voices carry their own instrument, so transport playback dispatches per-note:
+the events fed to `scheduleNotes` look up `voice.instrument` for each note.
+The keyboard preview, the note-creation click, the chord-cycler audition,
+the harmonize/stack-chord button feedback, and the move-feedback all use the
+*active* voice's instrument so the user hears what they're about to commit.
 
 ## Persistence
 

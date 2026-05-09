@@ -1,4 +1,5 @@
 import type { Scale } from "./music";
+import type { InstrumentId } from "./audio";
 
 export interface Note {
   id: string;
@@ -13,6 +14,7 @@ export interface Voice {
   id: string;
   name: string;
   color: string;     // hex
+  instrument: InstrumentId;
   muted: boolean;
   soloed: boolean;
 }

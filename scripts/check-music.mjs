@@ -1,13 +1,6 @@
 // Quick spot-checks for the chord helpers.
-// Run with `node scripts/check-music.mjs` from the repo root.
-
-import { register } from "node:module";
-import { pathToFileURL } from "node:url";
-
-// Use ts-node's loader if available; otherwise rely on a pre-built `.js`.
-// Easiest: import the TS source via the running Next.js dev server is overkill,
-// so just inline the helpers here for assertion. We re-implement just enough
-// to spot-check the core invariants instead of pulling tsx into the repo.
+// Run with `node --experimental-strip-types scripts/check-music.mjs` from
+// the repo root.
 
 import {
   chordsContaining,

@@ -156,6 +156,7 @@ function HarmonizeRow({ notes }: { notes: Note[] }) {
   const addNotes = useStore((s) => s.addNotes);
   const hover = useHoverPreview();
   const scale = project.scale;
+  const instrument = project.voices.find((v) => v.id === activeVoiceId)?.instrument;
   return (
     <div className="flex flex-wrap items-center gap-1">
       <span className="text-gray-400">Harmonize</span>
@@ -178,7 +179,7 @@ function HarmonizeRow({ notes }: { notes: Note[] }) {
                 velocity: n.velocity,
               }));
               const added = addNotes(created);
-              for (const n of added) playNote(n.pitch, 0.2);
+              for (const n of added) playNote(n.pitch, 0.2, { instrument });
             }}
             className="rounded bg-gray-800 px-2 py-1 text-xs hover:bg-gray-700"
             title={`Add a voice ${label} from each selected note`}
@@ -199,6 +200,7 @@ function StackChordRow({ notes }: { notes: Note[] }) {
   const addNotes = useStore((s) => s.addNotes);
   const hover = useHoverPreview();
   const scale = project.scale;
+  const instrument = project.voices.find((v) => v.id === activeVoiceId)?.instrument;
 
   // Always show the diatonic option so users discover it; disable it (with an
   // explanatory tooltip) when no working scale is set.
@@ -234,7 +236,7 @@ function StackChordRow({ notes }: { notes: Note[] }) {
               );
               if (newNotes.length === 0) return;
               const added = addNotes(newNotes);
-              const events = added.map((a) => ({ midi: a.pitch, startBeat: 0, lengthBeat: 0.4, velocity: 0.5 }));
+              const events = added.map((a) => ({ midi: a.pitch, startBeat: 0, lengthBeat: 0.4, velocity: 0.5, instrument }));
               scheduleNotes(events, 240);
             }}
             className={
@@ -285,12 +287,14 @@ function SingleNoteInspector({ note }: { note: Note }) {
     [chord, note.pitch],
   );
 
+  const instrument = project.voices.find((v) => v.id === activeVoiceId)?.instrument;
+
   // Audible preview when the chord changes.
   useEffect(() => {
     if (!chord || voicing.length === 0) return;
-    const events = voicing.map((midi) => ({ midi, startBeat: 0, lengthBeat: 1, velocity: 0.5 }));
+    const events = voicing.map((midi) => ({ midi, startBeat: 0, lengthBeat: 1, velocity: 0.5, instrument }));
     scheduleNotes(events, 240);
-  }, [chord, voicing]);
+  }, [chord, voicing, instrument]);
 
   // Visual preview: while the cycler shows a chord, ghost the chord tones
   // that would actually get added (skip the existing root note).
@@ -378,7 +382,7 @@ function SingleNoteInspector({ note }: { note: Note }) {
                     length: note.length,
                     velocity: note.velocity,
                   }]);
-                  for (const n of created) playNote(n.pitch, 0.2);
+                  for (const n of created) playNote(n.pitch, 0.2, { instrument });
                 }}
                 className="rounded bg-gray-800 px-2 py-1 text-xs hover:bg-gray-700"
                 {...hover(previewFor)}

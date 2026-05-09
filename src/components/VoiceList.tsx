@@ -1,6 +1,7 @@
 "use client";
 
 import { useStore } from "@/lib/store";
+import { INSTRUMENT_LIST, INSTRUMENT_NAMES, playNote, type InstrumentId } from "@/lib/audio";
 
 export function VoiceList() {
   const project = useStore((s) => s.project);
@@ -33,9 +34,25 @@ export function VoiceList() {
                 <span className="inline-block h-3 w-3 rounded-sm" style={{ background: v.color }} />
                 <span>{v.name}</span>
               </button>
+              <select
+                value={v.instrument}
+                onChange={(e) => {
+                  const inst = e.target.value as InstrumentId;
+                  updateVoice(v.id, { instrument: inst });
+                  // Quick audio sample of the new instrument so the user
+                  // hears what they picked.
+                  playNote(60, 0.6, { instrument: inst });
+                }}
+                className="ml-1 rounded bg-gray-700 px-1 py-0.5 text-xs"
+                title="Instrument"
+              >
+                {INSTRUMENT_LIST.map((id) => (
+                  <option key={id} value={id}>{INSTRUMENT_NAMES[id]}</option>
+                ))}
+              </select>
               <button
                 onClick={() => updateVoice(v.id, { muted: !v.muted })}
-                className={`ml-1 rounded px-1 text-xs ${v.muted ? "bg-amber-600" : "bg-gray-700 hover:bg-gray-600"}`}
+                className={`rounded px-1 text-xs ${v.muted ? "bg-amber-600" : "bg-gray-700 hover:bg-gray-600"}`}
                 title="Mute"
               >M</button>
               <button

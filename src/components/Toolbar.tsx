@@ -96,14 +96,21 @@ export function Toolbar() {
       return;
     }
     const soloed = project.voices.some((v) => v.soloed);
+    const voiceById = new Map(project.voices.map((v) => [v.id, v]));
     const events = project.notes
       .filter((n) => {
-        const v = project.voices.find((x) => x.id === n.voiceId);
+        const v = voiceById.get(n.voiceId);
         if (!v) return false;
         if (soloed) return v.soloed;
         return !v.muted;
       })
-      .map((n) => ({ midi: n.pitch, startBeat: n.start, lengthBeat: n.length, velocity: n.velocity }));
+      .map((n) => ({
+        midi: n.pitch,
+        startBeat: n.start,
+        lengthBeat: n.length,
+        velocity: n.velocity,
+        instrument: voiceById.get(n.voiceId)?.instrument,
+      }));
     if (events.length === 0) return;
     setPlaying(true);
     stopRef.current = scheduleNotes(

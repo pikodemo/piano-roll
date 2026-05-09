@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import type { Note, Project, Voice } from "./types";
 import { clampMidi } from "./music";
+import { DEFAULT_INSTRUMENT } from "./audio";
 import { saveProject } from "./storage";
 
 const VOICE_COLORS = [
@@ -31,7 +32,7 @@ export function makeDefaultProject(): Project {
     bars: 8,
     scale: null,
     voices: [
-      { id: voiceId, name: "Voice 1", color: VOICE_COLORS[0], muted: false, soloed: false },
+      { id: voiceId, name: "Voice 1", color: VOICE_COLORS[0], instrument: DEFAULT_INSTRUMENT, muted: false, soloed: false },
     ],
     notes: [],
     view: {
@@ -168,7 +169,7 @@ export const useStore = create<State & Actions>((set, get) => {
       const cur = get().project;
       const id = uid();
       const color = VOICE_COLORS[((cur?.voices.length ?? 0)) % VOICE_COLORS.length];
-      const voice: Voice = { id, name: `Voice ${(cur?.voices.length ?? 0) + 1}`, color, muted: false, soloed: false };
+      const voice: Voice = { id, name: `Voice ${(cur?.voices.length ?? 0) + 1}`, color, instrument: DEFAULT_INSTRUMENT, muted: false, soloed: false };
       mutate((p) => { p.voices = [...p.voices, voice]; });
       set({ activeVoiceId: id });
       return voice;

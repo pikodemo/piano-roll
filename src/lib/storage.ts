@@ -1,5 +1,6 @@
 import { openDB, type IDBPDatabase } from "idb";
 import type { Project } from "./types";
+import { DEFAULT_INSTRUMENT } from "./audio";
 
 const DB_NAME = "piano-roll";
 const STORE = "projects";
@@ -30,7 +31,16 @@ export async function listProjects(): Promise<Array<{ id: string; name: string; 
 
 export async function loadProject(id: string): Promise<Project | undefined> {
   const d = await db();
-  return (await d.get(STORE, id)) as Project | undefined;
+  const p = (await d.get(STORE, id)) as Project | undefined;
+  return p ? migrate(p) : undefined;
+}
+
+// Forward-compat: fill in fields added after the project was originally saved.
+function migrate(p: Project): Project {
+  return {
+    ...p,
+    voices: p.voices.map((v) => ({ ...v, instrument: v.instrument ?? DEFAULT_INSTRUMENT })),
+  };
 }
 
 export async function saveProject(project: Project): Promise<void> {

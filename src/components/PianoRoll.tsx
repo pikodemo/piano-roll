@@ -100,6 +100,10 @@ export function PianoRoll() {
   const contentW = totalBeats * view.pixelsPerBeat;
   const pitchRange = view.maxPitch - view.minPitch + 1;
   const contentH = pitchRange * view.rowHeight;
+  // The instrument used by the keyboard preview, the new-note click sound,
+  // and the move-feedback click — always the active voice's instrument so
+  // the user hears what they're about to play.
+  const activeInstrument = project.voices.find((v) => v.id === activeVoiceId)?.instrument;
 
   function snap(beat: number): number {
     if (!project) return beat;
@@ -153,7 +157,8 @@ export function PianoRoll() {
           if (ids.includes(n.id)) origNotes.set(n.id, { start: n.start, pitch: n.pitch });
         }
         setDrag({ kind: "move", ids, startBeat: pxToBeat(x), startPitch: pxToPitch(y), origNotes });
-        playNote(note.pitch, 0.15, { velocity: note.velocity });
+        const noteVoice = project!.voices.find((v) => v.id === note.voiceId);
+        playNote(note.pitch, 0.15, { velocity: note.velocity, instrument: noteVoice?.instrument });
       }
       return;
     }
@@ -177,7 +182,7 @@ export function PianoRoll() {
     const length = Math.max(1, view.snap);
     const note = addNote({ voiceId: activeVoiceId, pitch, start: startBeat, length, velocity: 0.8 });
     setSelected([note.id]);
-    playNote(pitch, 0.2, { velocity: 0.8 });
+    playNote(pitch, 0.2, { velocity: 0.8, instrument: activeInstrument });
     gridSvgRef.current.setPointerCapture(e.pointerId);
     setDrag({ kind: "create", id: note.id, startBeat, startPitch: pitch });
     setHoverPlace(null);
@@ -294,7 +299,7 @@ export function PianoRoll() {
           maxPitch={view.maxPitch}
           rowHeight={view.rowHeight}
           width={KEYBOARD_W}
-          onPreview={(p) => playNote(p, 0.3)}
+          onPreview={(p) => playNote(p, 0.3, { instrument: activeInstrument })}
         />
       </div>
       {/* Grid */}

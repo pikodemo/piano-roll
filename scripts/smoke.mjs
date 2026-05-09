@@ -112,6 +112,17 @@ const idbHas = await page.evaluate(async () => {
 if (!idbHas) fail("IndexedDB 'piano-roll' database not created");
 log("IndexedDB project saved");
 
+// --- Per-voice instrument dropdown ---
+const instSelect = page.locator("select[title='Instrument']").first();
+if ((await instSelect.count()) === 0) fail("Instrument select not visible in the voice list");
+const instOptionCount = await instSelect.locator("option").count();
+if (instOptionCount < 6) fail(`Expected >= 6 instruments, got ${instOptionCount}`);
+await instSelect.selectOption("pluck");
+await page.waitForTimeout(150);
+const instAfter = await instSelect.inputValue();
+if (instAfter !== "pluck") fail(`Instrument should change to pluck, got ${instAfter}`);
+log(`Instrument dropdown: ${instOptionCount} options, switched to ${instAfter}`);
+
 // Visible Delete button when notes are selected.
 const deleteBtn = page.locator("button", { hasText: /^Delete/ });
 if ((await deleteBtn.count()) === 0) fail("Delete button not visible while notes are selected");
