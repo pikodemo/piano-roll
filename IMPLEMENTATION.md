@@ -52,14 +52,24 @@ wide × `(maxPitch - minPitch + 1) * rowHeight` tall). The keyboard column and
 the time ruler live in their own panes; scroll is synced via a scroll handler
 so the ruler tracks horizontal scroll and the keyboard tracks vertical scroll.
 
-Pointer interactions are all on the grid SVG and dispatch by inspecting the
-event target's `data-note-id`:
+Pointer interactions are all on the grid SVG. The active **tool** (`select` or
+`draw`, stored in Zustand) decides what happens on empty-grid clicks:
 
-- empty + click → create note (snapped) and start a "create" drag that resizes
-  while the pointer is held;
-- note + click → select; drag near the right edge resizes, otherwise moves all
-  selected notes;
-- shift + drag on empty → marquee-select.
+- **Draw mode**, click on empty grid → create note (snapped, default 1-beat
+  length) and start a "create" drag that resizes while the pointer is held.
+- **Draw mode**, idle pointer over empty grid → render a dashed blue ghost at
+  the snapped target position, so the user can see where their next click will
+  land. Cleared on pointer-leave or while dragging.
+- **Select mode**, click on empty grid → start a marquee. Selection updates
+  live as the rectangle sweeps; shift makes the marquee additive (preserves
+  the prior selection).
+- **Draw mode + Shift** on empty → also marquee (additive).
+
+Note clicks behave the same in both modes:
+- click → select that note (or replace selection); drag → move all selected
+  notes; drag the right 6 px → resize.
+- shift-click → toggle the note in/out of the selection without starting a
+  drag.
 
 Pointer capture is requested on the grid SVG so a fast-moving pointer doesn't
 escape mid-drag.

@@ -16,7 +16,7 @@ type Drag =
   | { kind: "create"; id: string; startBeat: number; startPitch: number }
   | { kind: "move"; ids: string[]; startBeat: number; startPitch: number; origNotes: Map<string, { start: number; pitch: number }> }
   | { kind: "resize"; id: string; startBeat: number; origLength: number }
-  | { kind: "marquee"; x0: number; y0: number; x1: number; y1: number };
+  | { kind: "marquee"; x0: number; y0: number; x1: number; y1: number; additive: boolean; baseSelection: Set<string> };
 
 export function PianoRoll() {
   const project = useStore((s) => s.project);
@@ -25,6 +25,7 @@ export function PianoRoll() {
   const playheadBeat = useStore((s) => s.playheadBeat);
   const isPlaying = useStore((s) => s.isPlaying);
   const previewNotes = useStore((s) => s.previewNotes);
+  const tool = useStore((s) => s.tool);
   const addNote = useStore((s) => s.addNote);
   const updateNote = useStore((s) => s.updateNote);
   const updateNotes = useStore((s) => s.updateNotes);
@@ -40,6 +41,9 @@ export function PianoRoll() {
   const kbWrapRef = useRef<HTMLDivElement | null>(null);
   const gridSvgRef = useRef<SVGSVGElement | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
+  // Where the next click would create a note (only used in draw mode, when
+  // the pointer is over the grid and not over an existing note).
+  const [hoverPlace, setHoverPlace] = useState<{ start: number; pitch: number; length: number } | null>(null);
 
   // Sync scroll between the corner panes and the main grid.
   const onScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
@@ -154,11 +158,15 @@ export function PianoRoll() {
       return;
     }
 
-    // Empty area: shift+drag → marquee; otherwise create a new note.
-    if (e.shiftKey) {
+    // Empty area. Behavior depends on the active tool and shift modifier.
+    // - Select tool: marquee always (shift = additive). Draw tool with shift:
+    //   marquee. Draw tool plain: create a new note + drag-to-extend.
+    if (tool === "select" || e.shiftKey) {
       gridSvgRef.current.setPointerCapture(e.pointerId);
-      setDrag({ kind: "marquee", x0: x, y0: y, x1: x, y1: y });
-      clearSelection();
+      const baseSelection = new Set(e.shiftKey ? selected : []);
+      setDrag({ kind: "marquee", x0: x, y0: y, x1: x, y1: y, additive: e.shiftKey, baseSelection });
+      if (!e.shiftKey) clearSelection();
+      setHoverPlace(null);
       return;
     }
 
@@ -172,13 +180,35 @@ export function PianoRoll() {
     playNote(pitch, 0.2, { velocity: 0.8 });
     gridSvgRef.current.setPointerCapture(e.pointerId);
     setDrag({ kind: "create", id: note.id, startBeat, startPitch: pitch });
+    setHoverPlace(null);
   }
 
   function onGridPointerMove(e: React.PointerEvent<SVGSVGElement>) {
-    if (!drag || !gridSvgRef.current) return;
+    if (!gridSvgRef.current) return;
     const rect = gridSvgRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+
+    // When idle in draw mode, show a ghost note at the snapped target so the
+    // user knows exactly where the next click will land.
+    if (!drag) {
+      if (tool !== "draw" || e.shiftKey) {
+        if (hoverPlace) setHoverPlace(null);
+        return;
+      }
+      const target = e.target as Element;
+      if (target.getAttribute && target.getAttribute("data-note-id")) {
+        if (hoverPlace) setHoverPlace(null);
+        return;
+      }
+      const startBeat = snap(pxToBeat(x));
+      const pitch = pxToPitch(y);
+      const length = Math.max(1, view.snap);
+      if (!hoverPlace || hoverPlace.start !== startBeat || hoverPlace.pitch !== pitch || hoverPlace.length !== length) {
+        setHoverPlace({ start: startBeat, pitch, length });
+      }
+      return;
+    }
 
     if (drag.kind === "create") {
       const cur = pxToBeat(x);
@@ -198,27 +228,33 @@ export function PianoRoll() {
       const length = Math.max(view.snap, snap(drag.origLength + (cur - drag.startBeat)));
       updateNote(drag.id, { length });
     } else if (drag.kind === "marquee") {
-      setDrag({ ...drag, x1: x, y1: y });
-    }
-  }
-
-  function onGridPointerUp(e: React.PointerEvent<SVGSVGElement>) {
-    if (!drag) return;
-    if (drag.kind === "marquee") {
-      const x0 = Math.min(drag.x0, drag.x1);
-      const x1 = Math.max(drag.x0, drag.x1);
-      const y0 = Math.min(drag.y0, drag.y1);
-      const y1 = Math.max(drag.y0, drag.y1);
-      const ids: string[] = [];
+      // Live update of the selection so the user sees notes light up as the
+      // marquee sweeps over them.
+      const x0 = Math.min(drag.x0, x);
+      const x1 = Math.max(drag.x0, x);
+      const y0 = Math.min(drag.y0, y);
+      const y1 = Math.max(drag.y0, y);
+      const ids = new Set(drag.baseSelection);
       for (const n of project!.notes) {
         const nx0 = beatToPx(n.start);
         const nx1 = beatToPx(n.start + n.length);
         const ny0 = pitchToPx(n.pitch);
         const ny1 = ny0 + view.rowHeight;
-        if (nx1 >= x0 && nx0 <= x1 && ny1 >= y0 && ny0 <= y1) ids.push(n.id);
+        if (nx1 >= x0 && nx0 <= x1 && ny1 >= y0 && ny0 <= y1) ids.add(n.id);
       }
       setSelected(ids);
+      setDrag({ ...drag, x1: x, y1: y });
     }
+  }
+
+  function onGridPointerLeave() {
+    if (hoverPlace) setHoverPlace(null);
+  }
+
+  function onGridPointerUp(e: React.PointerEvent<SVGSVGElement>) {
+    if (!drag) return;
+    // Marquee final selection was already applied during pointer-move; nothing
+    // extra to do at pointer-up.
     try { gridSvgRef.current?.releasePointerCapture(e.pointerId); } catch {}
     setDrag(null);
   }
@@ -272,7 +308,11 @@ export function PianoRoll() {
           onPointerMove={onGridPointerMove}
           onPointerUp={onGridPointerUp}
           onPointerCancel={onGridPointerUp}
-          style={{ touchAction: "none" }}
+          onPointerLeave={onGridPointerLeave}
+          style={{
+            touchAction: "none",
+            cursor: tool === "draw" ? "crosshair" : "default",
+          }}
         >
           {/* Lane bands */}
           {laneRows.map(({ y, black, pitch }) => (
@@ -335,6 +375,23 @@ export function PianoRoll() {
               pointerEvents="none"
             />
           ))}
+          {/* Hover-to-place ghost (draw mode only, idle pointer). */}
+          {hoverPlace && !drag && tool === "draw" && (
+            <rect
+              x={beatToPx(hoverPlace.start)}
+              y={pitchToPx(hoverPlace.pitch)}
+              width={Math.max(2, beatToPx(hoverPlace.length))}
+              height={view.rowHeight - 1}
+              fill="#60a5fa"
+              fillOpacity={0.25}
+              stroke="#60a5fa"
+              strokeOpacity={0.8}
+              strokeWidth={1}
+              strokeDasharray="3 2"
+              rx={2}
+              pointerEvents="none"
+            />
+          )}
           {/* Marquee */}
           {drag?.kind === "marquee" && (
             <rect

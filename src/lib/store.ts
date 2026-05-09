@@ -55,6 +55,9 @@ interface Snapshot {
 // Ghost notes shown by hover-preview (not persisted).
 export interface PreviewNote { pitch: number; start: number; length: number }
 
+// Editor tool modes.
+export type Tool = "select" | "draw";
+
 interface State {
   project: Project | null;
   selectedIds: Set<string>;
@@ -63,6 +66,7 @@ interface State {
   playheadBeat: number;
   hoverPitch: number | null;
   previewNotes: PreviewNote[];
+  tool: Tool;
   past: Snapshot[];
   future: Snapshot[];
 }
@@ -97,6 +101,7 @@ interface Actions {
   setHoverPitch: (pitch: number | null) => void;
   setPreview: (notes: PreviewNote[]) => void;
   clearPreview: () => void;
+  setTool: (tool: Tool) => void;
 
   // Reassign every selected note to a different voice.
   moveSelectedToVoice: (voiceId: string) => void;
@@ -139,6 +144,7 @@ export const useStore = create<State & Actions>((set, get) => {
     playheadBeat: 0,
     hoverPitch: null,
     previewNotes: [],
+    tool: "draw",
     past: [],
     future: [],
 
@@ -249,6 +255,7 @@ export const useStore = create<State & Actions>((set, get) => {
     setHoverPitch: (pitch) => set({ hoverPitch: pitch }),
     setPreview: (notes) => set({ previewNotes: notes }),
     clearPreview: () => set((s) => s.previewNotes.length === 0 ? s : { previewNotes: [] }),
+    setTool: (tool) => set({ tool }),
 
     undo: () => {
       const { past, project } = get();

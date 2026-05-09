@@ -47,6 +47,13 @@ if (!gridSvg) fail("no grid svg");
 const box = await gridSvg.boundingBox();
 log(`grid svg ${Math.round(box.width)}x${Math.round(box.height)} at (${Math.round(box.x)},${Math.round(box.y)})`);
 
+// --- Hover-to-place preview should appear in draw mode ---
+await page.mouse.move(box.x + 100, box.y + 200);
+await page.waitForTimeout(100);
+const drawHoverGhosts = await page.locator("rect[stroke-dasharray]").count();
+if (drawHoverGhosts < 1) fail(`Expected at least 1 dashed ghost in draw mode hover, got ${drawHoverGhosts}`);
+log(`draw-mode hover ghost: ${drawHoverGhosts}`);
+
 // Click in the grid to add a note.
 await page.mouse.click(box.x + 100, box.y + 200);
 await page.waitForTimeout(150);
@@ -133,18 +140,22 @@ await page.waitForTimeout(100);
 await page.mouse.click(grid2.x + 300, grid2.y + 240);
 await page.waitForTimeout(150);
 
-// --- Multi-select via marquee (shift-drag on empty area) ---
+// --- Switch to Select mode and marquee without shift ---
+await page.click("button:has-text('Select')");
+await page.waitForTimeout(100);
 await page.mouse.move(grid2.x + 60, grid2.y + 180);
-await page.keyboard.down("Shift");
 await page.mouse.down();
 await page.mouse.move(grid2.x + 360, grid2.y + 260, { steps: 10 });
 await page.mouse.up();
-await page.keyboard.up("Shift");
 await page.waitForTimeout(150);
 let bodyTxt = await page.locator("body").innerText();
 const marqueeMatch = /(\d+)\s+notes selected/.exec(bodyTxt);
-if (!marqueeMatch || Number(marqueeMatch[1]) < 3) fail(`Marquee should select 3 notes, got: ${marqueeMatch?.[0] ?? "no match"}`);
-log(`marquee selected: ${marqueeMatch[0]}`);
+if (!marqueeMatch || Number(marqueeMatch[1]) < 3) fail(`Select-mode marquee (no shift) should select 3 notes, got: ${marqueeMatch?.[0] ?? "no match"}`);
+log(`select-mode marquee: ${marqueeMatch[0]}`);
+
+// Switch back to Draw mode for the rest of the tests.
+await page.click("button:has-text('Draw')");
+await page.waitForTimeout(100);
 
 // --- Stack chord button + ghost preview while hovering ---
 const majBtn = page.locator("button[title*='maj chord rooted']").first();

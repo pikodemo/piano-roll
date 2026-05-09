@@ -19,10 +19,15 @@ node scripts/smoke.mjs   # headless playwright smoke test (needs `npm run dev`)
 
 ## Quick tour
 
-- **Click** in the grid to draw a note; **drag** to extend it.
+- The **toolbar** has a tool toggle: **✎ Draw** (B) is the default — click in
+  the grid to add a note. Switch to **⬚ Select** (V) when you just want to
+  pick notes: click-drag is now a marquee, no Shift needed.
+- In Draw mode a faint **dashed ghost** follows the pointer to show exactly
+  where the next note will land — useful because notes are wider than the
+  snap unit.
 - **Click + drag** an existing note to move it; the right edge resizes.
-- **Shift-drag** on empty grid is marquee-select; **Shift-click** on a note
-  toggles it in/out of the selection.
+- **Shift-drag** on empty grid always marquees (additive — preserves the
+  current selection); **Shift-click** on a note toggles it in/out.
 - **Backspace** removes the selection. **↑/↓** transposes by a semitone
   (Shift = octave). **←/→** nudges by the snap value.
 - **Space** plays / stops. Tempo, bar count, snap, and a working scale live in

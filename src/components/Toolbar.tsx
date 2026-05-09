@@ -18,6 +18,45 @@ const SNAP_OPTIONS: Array<{ label: string; value: number }> = [
 
 const MODES: ScaleMode[] = ["major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "harmonic_minor", "melodic_minor", "minor_pentatonic", "major_pentatonic", "blues"];
 
+function ToolToggle() {
+  const tool = useStore((s) => s.tool);
+  const setTool = useStore((s) => s.setTool);
+  // Keyboard shortcuts: V = select, B = draw (Photoshop convention).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement;
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      if (e.key === "v" || e.key === "V") { e.preventDefault(); setTool("select"); }
+      else if (e.key === "b" || e.key === "B") { e.preventDefault(); setTool("draw"); }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setTool]);
+  const cls = (active: boolean) =>
+    `rounded px-2 py-1 text-xs font-semibold ${active ? "bg-white text-gray-900" : "bg-gray-800 text-gray-200 hover:bg-gray-700"}`;
+  return (
+    <div className="flex items-center gap-1" role="radiogroup" aria-label="Tool">
+      <button
+        onClick={() => setTool("select")}
+        className={cls(tool === "select")}
+        title="Select (V) — click-drag for marquee, click notes to select"
+        aria-pressed={tool === "select"}
+      >
+        ⬚ Select
+      </button>
+      <button
+        onClick={() => setTool("draw")}
+        className={cls(tool === "draw")}
+        title="Draw (B) — click in the grid to add a note"
+        aria-pressed={tool === "draw"}
+      >
+        ✎ Draw
+      </button>
+    </div>
+  );
+}
+
 export function Toolbar() {
   const project = useStore((s) => s.project);
   const isPlaying = useStore((s) => s.isPlaying);
@@ -84,6 +123,7 @@ export function Toolbar() {
   return (
     <div className="flex flex-wrap items-center gap-3 border-b border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
       <ProjectsMenu />
+      <ToolToggle />
       <button
         onClick={toggle}
         className="rounded bg-blue-600 px-3 py-1 font-semibold hover:bg-blue-500"
