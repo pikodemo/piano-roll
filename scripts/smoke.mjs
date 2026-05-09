@@ -105,6 +105,54 @@ const idbHas = await page.evaluate(async () => {
 if (!idbHas) fail("IndexedDB 'piano-roll' database not created");
 log("IndexedDB project saved");
 
+// Visible Delete button when notes are selected.
+const deleteBtn = page.locator("button", { hasText: /^Delete/ });
+if ((await deleteBtn.count()) === 0) fail("Delete button not visible while notes are selected");
+const beforeDel = await page.locator("[data-note-id]").count();
+await deleteBtn.first().click();
+await page.waitForTimeout(150);
+const afterDel = await page.locator("[data-note-id]").count();
+if (afterDel >= beforeDel) fail(`Delete button didn't remove notes (${beforeDel} → ${afterDel})`);
+log(`Delete button: ${beforeDel} → ${afterDel}`);
+
+// Projects menu: open it, create a new project, verify the grid resets.
+await page.click("button:has-text('Projects')");
+await page.waitForTimeout(100);
+await page.click("button:has-text('New project')");
+await page.waitForTimeout(300);
+const notesAfterNew = await page.locator("[data-note-id]").count();
+if (notesAfterNew !== 0) fail(`Expected empty grid after New project, got ${notesAfterNew} notes`);
+log("New project: grid is empty");
+
+// Add a note in the new project, then open menu and verify it lists 2 projects.
+const grid2 = await gridSvg.boundingBox();
+await page.mouse.click(grid2.x + 100, grid2.y + 200);
+await page.waitForTimeout(150);
+await page.click("button:has-text('Projects')");
+await page.waitForTimeout(150);
+// Items are rows with timestamps; count by the right-side delete buttons.
+const projectRows = await page.locator("[role='menu'] button[title='Delete project']").count();
+if (projectRows < 2) fail(`Expected at least 2 projects in menu, got ${projectRows}`);
+log(`Projects menu lists ${projectRows} projects`);
+
+// Delete the *non-current* project (the older one). Confirm dialog comes from window.confirm.
+page.once("dialog", (d) => d.accept());
+const rows = page.locator("[role='menu'] > div > div");
+const rowCount = await rows.count();
+// Find a row whose label doesn't include "current".
+let targetIdx = -1;
+for (let i = 0; i < rowCount; i++) {
+  const txt = await rows.nth(i).innerText();
+  if (!txt.includes("current")) { targetIdx = i; break; }
+}
+if (targetIdx === -1) fail("Couldn't find a non-current project row to delete");
+await rows.nth(targetIdx).locator("button[title='Delete project']").click();
+await page.waitForTimeout(200);
+// Menu stays open after delete; check count directly.
+const projectRowsAfter = await page.locator("[role='menu'] button[title='Delete project']").count();
+if (projectRowsAfter !== projectRows - 1) fail(`Expected ${projectRows - 1} projects after delete, got ${projectRowsAfter}`);
+log(`After delete: ${projectRowsAfter} projects`);
+
 if (errors.length > 0) {
   console.error("[smoke] Errors during test:");
   for (const e of errors) console.error("  - " + e);

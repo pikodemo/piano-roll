@@ -5,6 +5,7 @@ import { scheduleNotes } from "@/lib/audio";
 import { useEffect, useRef } from "react";
 import type { ScaleMode } from "@/lib/music";
 import { NOTE_NAMES } from "@/lib/music";
+import { ProjectsMenu } from "./ProjectsMenu";
 
 const SNAP_OPTIONS: Array<{ label: string; value: number }> = [
   { label: "1/1", value: 4 },
@@ -82,6 +83,7 @@ export function Toolbar() {
   if (!project) return null;
   return (
     <div className="flex flex-wrap items-center gap-3 border-b border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
+      <ProjectsMenu />
       <button
         onClick={toggle}
         className="rounded bg-blue-600 px-3 py-1 font-semibold hover:bg-blue-500"

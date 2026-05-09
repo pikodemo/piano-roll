@@ -35,6 +35,11 @@ node scripts/smoke.mjs   # headless playwright smoke test (needs `npm run dev`)
   synth.
 - Select one or more notes and use **Harmonize** to add a voice a 3rd / 5th /
   6th / octave above or below — snapped to the working scale if one is set.
+- A red **Delete** button appears in the inspector when notes are selected
+  (Backspace works too).
+- The **Projects** menu in the toolbar lists every saved project, lets you
+  create new ones, switch between them, and delete the ones you don't need.
+  Rename via the name field on the right side of the toolbar.
 
 Everything is auto-saved to IndexedDB.
 

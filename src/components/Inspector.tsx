@@ -18,6 +18,7 @@ export function Inspector() {
   const selected = useStore((s) => s.selectedIds);
   const activeVoiceId = useStore((s) => s.activeVoiceId);
   const addNotes = useStore((s) => s.addNotes);
+  const deleteNotes = useStore((s) => s.deleteNotes);
 
   const selectedNotes = useMemo(
     () => project?.notes.filter((n) => selected.has(n.id)) ?? [],
@@ -35,17 +36,35 @@ export function Inspector() {
           ↑/↓ transpose. ←/→ nudge. Backspace deletes. Space plays.
         </div>
       ) : single ? (
-        // `key` remounts the cycler when the selected note changes, so its
-        // local state (idx, last previewed key) resets cleanly.
-        <SingleNoteInspector key={single.id} />
+        <div>
+          {/* `key` remounts the cycler when the selected note changes. */}
+          <SingleNoteInspector key={single.id} />
+          <div className="mt-2">
+            <DeleteSelectedButton />
+          </div>
+        </div>
       ) : (
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-gray-400">{selectedNotes.length} notes selected</span>
           <HarmonizeRow />
+          <DeleteSelectedButton />
         </div>
       )}
     </div>
   );
+
+  function DeleteSelectedButton() {
+    return (
+      <button
+        onClick={() => deleteNotes(Array.from(selected))}
+        className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500"
+        title="Delete selected (Backspace)"
+      >
+        Delete{selectedNotes.length > 1 ? ` ${selectedNotes.length}` : ""}
+        <span className="ml-1 text-red-200/80">⌫</span>
+      </button>
+    );
+  }
 
   function HarmonizeRow() {
     const scale = project!.scale;

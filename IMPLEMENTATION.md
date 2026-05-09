@@ -15,11 +15,12 @@ src/
   components/
     AppShell.tsx        // boots project from idb, wires the panes together
     Toolbar.tsx         // transport, tempo, bars, snap, scale, undo/redo
+    ProjectsMenu.tsx    // dropdown: list / new / switch / delete projects
     VoiceList.tsx       // active voice picker, mute/solo, add/remove
     PianoRoll.tsx       // grid + sticky keyboard + sticky ruler
     Keyboard.tsx        // 12-tone keyboard column (preview-on-click)
     TimeRuler.tsx       // bar-numbered ruler
-    Inspector.tsx       // selected-note details, chord cycler, harmonize
+    Inspector.tsx       // selected-note details, chord cycler, harmonize, delete
     ChatPanel.tsx       // stage-2 placeholder w/ model picker
   lib/
     music.ts            // pitch/scale/chord helpers (pure)
@@ -98,10 +99,19 @@ calls `saveProject(project)` on every mutation, debounced to 250ms. On boot
 the AppShell loads the most recently updated project, falling back to a fresh
 default if none exists.
 
+## Projects menu
+
+A dropdown in the toolbar lists every project saved in IndexedDB. Each row
+opens (loads) the project and has an `×` to delete it. "New project" creates
+an empty one with a timestamped name and switches to it. Deleting the current
+project switches to the most-recent remaining one (or creates a fresh one if
+the list is now empty), so the editor is never left without a project.
+
+Rename is via the project name input on the right side of the toolbar — typing
+saves immediately through the same debounced auto-save pipeline.
+
 ## What's intentionally simple right now
 
-- Single project, no project picker UI yet (load most recent / create fresh).
-  The data layer supports many; just no UI.
 - No MIDI export, no audio export.
 - No swing, no per-note velocity editing UI (velocity exists in the model).
 - No copy/paste yet.
