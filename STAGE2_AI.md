@@ -1,102 +1,145 @@
-# Stage 2 — AI agent integration
+# Stage 2 — AI agent integration (shipped)
 
-The agent should feel like a collaborator that can see the roll and edit it.
-This document is the design we'll build against in stage 2.
+The agent feels like a collaborator that can see the roll and edit it. This
+document is the as-built design — read alongside `IMPLEMENTATION.md`.
+
+## Setup
+
+Create `.env.local` with your key (see `.env.local.example`):
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Restart `next dev`. On Vercel, set the same env var on the project.
 
 ## Architecture
 
 ```
- Browser                                   Vercel server
+ Browser                                   Server (Next.js route)
 ┌──────────────────────┐                  ┌────────────────────────┐
-│ Chat UI ──┐          │                  │                        │
-│           │          │   POST /api/chat │  Anthropic SDK         │
-│ Store ────┼──snapshot┼─────────────────▶│  (streaming, tools)    │
-│           │          │                  │                        │
-│           ◀───stream─┼──────────────────┤                        │
-│           │  text +  │                  │                        │
-│           │  tool    │                  │                        │
-│           │  results │                  │                        │
+│ Chat UI ──┐          │                  │ /api/chat              │
+│           │          │   POST /api/chat │ • Anthropic SDK        │
+│ Store ────┼──snapshot┼─────────────────▶│ • In-memory snapshot   │
+│           │ + history│                  │ • Manual agent loop    │
+│           │          │                  │   (tool_use round-trip)│
+│           ◀───NDJSON─┼──────────────────┤ • z.toJSONSchema()     │
+│           │  events  │                  │   for tool schemas     │
 │ Apply ◀───┘          │                  └────────────────────────┘
 │ patches              │
 └──────────────────────┘
 ```
 
-- The browser is the source of truth. On each turn it sends the current
-  project snapshot + chat history + chosen model.
-- The server runs a tool loop with the Anthropic SDK. Tool calls are evaluated
-  against the snapshot it received; the resulting **patches** are streamed back.
-- The browser applies patches through the same Zustand mutations the UI uses,
-  so undo/redo and IndexedDB persistence work identically.
+- The browser is the source of truth. Each turn sends `{ model, messages, project }`.
+- The server snapshot starts as a clone of the browser's project. Each tool
+  call mutates the snapshot in place; the new snapshot is streamed back as a
+  `patch` event so the user sees changes appear live.
+- The system prompt + tool definitions are stable and use `cache_control`
+  for prompt caching; the volatile project state is included in the latest
+  user turn (cache miss expected for that block).
 
 ## Tools
 
-Each tool is a JSON-schema'd function the model can call.
+Pure functions in `src/lib/agent-tools.ts`. Mirrors the user-facing operations
+1:1:
 
-| Tool | Inputs | Effect |
-|------|--------|--------|
-| `read_project` | — | Returns the current project snapshot. (Free no-op; the server already has it but exposing it lets the model "look again" after edits.) |
-| `add_notes` | `notes: Note[]`, `voiceId?` | Appends notes. Returns the IDs assigned. |
-| `update_notes` | `updates: {id, ...partial}[]` | Patch-update notes. |
-| `delete_notes` | `ids: string[]` | Remove notes. |
-| `transpose` | `ids: string[]` (or `all: true`), `semitones: number` | Convenience wrapper. |
-| `set_voice_meta` | `voiceId, name?, color?, muted?` | Edit voice metadata. |
-| `add_voice` | `name, color` | New voice. Returns id. |
-| `set_tempo` | `bpm` | Change tempo. |
-| `set_scale` | `tonic, mode` | Records the scale on the project (used by harmonization tools and the model). |
+| Tool | Effect |
+|---|---|
+| `read_project` | Re-read full project (notes, voices, tempo, scale, …). |
+| `add_notes` | Append notes to a voice. |
+| `update_notes` | Patch existing notes by id (pitch / start / length / velocity / voice). |
+| `delete_notes` | Remove notes. |
+| `transpose` | Shift notes (or all notes) by N semitones. |
+| `move_notes_to_voice` | Reassign notes to a different voice. |
+| `add_voice` | Create a new voice (name / color / instrument). |
+| `update_voice` | Rename, recolor, change instrument, mute, solo. |
+| `delete_voice` | Delete voice + its notes (refuses to drop the last voice). |
+| `set_tempo` / `set_bars` | Project length & tempo. |
+| `set_scale` | Working scale (tonic + mode), or clear. |
+| `harmonize_notes` | Add a parallel voice at a chromatic interval (snaps to scale when set). |
+| `stack_chord` | Stack chord tones above each given note (`maj`/`min`/`7`/…/`diatonic`). |
+| `add_chord` | Place a single chord directly with a target near-pitch and voicing. |
+| `select_notes` | Highlight notes in the user's UI (visual feedback). |
 
-All tools return either the patch they applied or an error string. The server
-keeps applying tool calls in a loop until the model produces a final
-`assistant` message with no tool calls.
+Tool inputs are validated by Zod schemas (`ToolSchemas`); the route converts
+them to JSON Schema with `z.toJSONSchema()` for the Anthropic SDK.
 
 ## Streaming protocol
 
-The route streams a sequence of newline-delimited JSON events:
+NDJSON over `application/x-ndjson`. One event per line:
 
 ```
-{"type":"text_delta","delta":"Sure, transposing..."}
-{"type":"tool_use","name":"transpose","input":{"all":true,"semitones":-12}}
-{"type":"tool_result","name":"transpose","patch":{...}}
-{"type":"text_delta","delta":"Done."}
-{"type":"done"}
+{"type":"text","delta":"Sure, transposing..."}
+{"type":"thinking","delta":"..."}                  // adaptive thinking summary (when enabled)
+{"type":"tool","name":"transpose","input":{...},"id":"toolu_..."}
+{"type":"patch","project":{...}}                   // updated project after the tool ran
+{"type":"selection","ids":[...]}                   // when select_notes was called
+{"type":"tool_result","name":"transpose","id":"toolu_...","result":"Transposed 8 notes by -12 semitones."}
+{"type":"text","delta":"Done."}
+{"type":"done","stop_reason":"end_turn"}
+{"type":"error","message":"..."}                   // unrecoverable
 ```
 
-The client applies `patch` events to the store as they arrive — the user sees
-the roll change while the model is still talking.
+The client applies `patch` events to the store via `applyAgentPatch(project)`
+— same persistence pipeline as user edits, but bypasses undo's per-edit
+snapshots. One undo-snapshot is captured at the start of the agent turn via
+`beginAgentTurn()`, so a single Cmd-Z undoes the whole turn.
 
 ## Model selection
 
-A small dropdown in the chat panel:
+Dropdown in the chat panel:
 
-- Claude Opus 4.7 — `claude-opus-4-7` (default, best for arrangement reasoning).
-- Claude Sonnet 4.6 — `claude-sonnet-4-6` (fast, cheap, very capable).
-- Claude Haiku 4.5 — `claude-haiku-4-5-20251001` (cheapest).
+- **Claude Opus 4.7** — `claude-opus-4-7` (default, best for arrangement reasoning)
+- **Claude Sonnet 4.6** — `claude-sonnet-4-6`
+- **Claude Haiku 4.5** — `claude-haiku-4-5`
 
-Picked model is sent in the request body.
+The chosen ID is sent verbatim in the request body. Adaptive thinking
+(`thinking: { type: "adaptive" }`) is on; sampling parameters are not used —
+Opus 4.7 doesn't accept them anyway.
 
-## Prompting
+## System prompt
 
-System prompt includes:
+`SYSTEM_PROMPT` in `src/app/api/chat/route.ts`. Contents:
 
-- A description of the JSON shape of `Note` and `Voice`.
-- The tools available (the SDK supplies the schemas; the prompt explains intent).
-- A reminder that "diatonic to the project's scale" should use `set_scale` if
-  the scale isn't set yet, then derive notes from it.
-- The current project snapshot (so the model can reason without immediately
-  calling `read_project`).
+- Schema description (pitch = MIDI integer, time in beats, voice schema, instruments).
+- Available scale modes + chord qualities + harmony intervals (the same
+  vocabulary as the UI buttons).
+- Working principles ("prefer update_notes over delete + add", "set_scale
+  first if the user asks for diatonic chords", etc.).
+
+Cached via `cache_control: { type: "ephemeral" }` so multi-turn chat reuses
+the prefix.
+
+## Agent loop
+
+Manual loop in the route handler (not the SDK's tool runner) so we can stream
+a `patch` event after each tool execution while the model is still talking.
+Capped at 8 turns per request to bound runaway loops; `pause_turn` (server-side
+tool budget) is handled by re-issuing.
 
 ## Auth / secrets
 
-- `ANTHROPIC_API_KEY` is a Vercel server env var. Never sent to the browser.
-- Rate limit: 1 in-flight request per session (client-side guard).
+- `ANTHROPIC_API_KEY` is server-side only. The route reads it from
+  `process.env`; if missing, returns a structured 500 with a friendly message
+  the chat panel surfaces in red.
+- The browser never sees the key.
 
-## Telemetry
+## Limitations / future work
 
-Off by default. If we add it, log only token counts per turn — never the prompt
-or the project itself.
+- No abort: clicking "Send" again while the agent is mid-turn isn't supported
+  — UI disables the input until the turn finishes. An AbortController hook is
+  a small follow-up.
+- No chat persistence: messages live in the Zustand store only. Surviving a
+  reload would mean adding a `messages` field to `Project` (or a new IDB store).
+- Token usage isn't surfaced. The SDK returns it in `finalMessage().usage`; we
+  could stream a usage event after each turn for cost visibility.
 
 ## Testing
 
-- Mock the SDK in unit tests. For each tool, assert that valid input mutates the
-  snapshot the way we expect and that invalid input returns an error.
-- A short integration test against a real key can be wired up in CI later (gated
-  on the secret existing).
+- `scripts/smoke.mjs` covers the chat panel UI end-to-end: sends a message,
+  verifies the missing-`ANTHROPIC_API_KEY` error surfaces correctly. The
+  expected 500 from `/api/chat` is filtered out of the page-error tracker so
+  the rest of the test suite still runs clean.
+- For real-key testing, set the env var and chat with the agent in dev:
+  "transpose everything down an octave" and "add a bass voice" are good first
+  prompts.

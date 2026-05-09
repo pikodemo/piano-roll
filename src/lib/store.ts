@@ -59,6 +59,21 @@ export interface PreviewNote { pitch: number; start: number; length: number }
 // Editor tool modes.
 export type Tool = "select" | "draw";
 
+// In-memory chat state used by the stage-2 agent.
+export interface ChatToolCall {
+  id: string;
+  name: string;
+  input: unknown;
+  result?: string;
+  error?: boolean;
+}
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  text: string;
+  toolCalls: ChatToolCall[];
+}
+
 interface State {
   project: Project | null;
   selectedIds: Set<string>;
@@ -68,6 +83,10 @@ interface State {
   hoverPitch: number | null;
   previewNotes: PreviewNote[];
   tool: Tool;
+  // Stage-2 chat state. Not persisted.
+  chatMessages: ChatMessage[];
+  chatBusy: boolean;
+  chatError: string | null;
   past: Snapshot[];
   future: Snapshot[];
 }
@@ -103,6 +122,14 @@ interface Actions {
   setPreview: (notes: PreviewNote[]) => void;
   clearPreview: () => void;
   setTool: (tool: Tool) => void;
+
+  // Chat actions.
+  appendChatMessage: (msg: ChatMessage) => void;
+  patchLastAssistant: (patch: Partial<ChatMessage> | ((m: ChatMessage) => Partial<ChatMessage>)) => void;
+  setChatBusy: (busy: boolean) => void;
+  setChatError: (msg: string | null) => void;
+  beginAgentTurn: () => void;
+  applyAgentPatch: (project: Project) => void;
 
   // Reassign every selected note to a different voice.
   moveSelectedToVoice: (voiceId: string) => void;
@@ -146,6 +173,9 @@ export const useStore = create<State & Actions>((set, get) => {
     hoverPitch: null,
     previewNotes: [],
     tool: "draw",
+    chatMessages: [],
+    chatBusy: false,
+    chatError: null,
     past: [],
     future: [],
 
@@ -257,6 +287,39 @@ export const useStore = create<State & Actions>((set, get) => {
     setPreview: (notes) => set({ previewNotes: notes }),
     clearPreview: () => set((s) => s.previewNotes.length === 0 ? s : { previewNotes: [] }),
     setTool: (tool) => set({ tool }),
+
+    appendChatMessage: (msg) => set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
+    patchLastAssistant: (patch) => set((s) => {
+      const idx = (() => {
+        for (let i = s.chatMessages.length - 1; i >= 0; i--) {
+          if (s.chatMessages[i].role === "assistant") return i;
+        }
+        return -1;
+      })();
+      if (idx === -1) return s;
+      const cur = s.chatMessages[idx];
+      const p = typeof patch === "function" ? patch(cur) : patch;
+      const next = { ...cur, ...p };
+      const list = [...s.chatMessages];
+      list[idx] = next;
+      return { chatMessages: list };
+    }),
+    setChatBusy: (busy) => set({ chatBusy: busy }),
+    setChatError: (msg) => set({ chatError: msg }),
+
+    // Capture one undo snapshot before the agent makes changes for this turn.
+    // Subsequent applyAgentPatch calls during the same turn don't push history.
+    beginAgentTurn: () => set((s) => {
+      if (!s.project) return s;
+      return { past: [...s.past.slice(-49), snap(s.project)], future: [] };
+    }),
+    // Replace project state without pushing to history; persist via the same
+    // debounced save path used by user edits.
+    applyAgentPatch: (project) => {
+      const next = { ...project, updatedAt: Date.now() };
+      set({ project: next });
+      scheduleSave(next);
+    },
 
     undo: () => {
       const { past, project } = get();

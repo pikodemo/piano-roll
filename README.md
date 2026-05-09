@@ -4,18 +4,25 @@ Browser-based piano roll for sketching musical arrangements, with a
 Claude-powered side chat (stage 2) that can read and rewrite your roll on
 request.
 
-Stage 1 (this PR) ships the standalone piano roll. The chat panel is present
-but disabled until stage 2.
+Stage 1 ships the standalone piano roll. Stage 2 ships the Claude agent —
+the chat panel sees the project, has the same tool surface as the user
+(add/move/delete notes, harmonize, stack chords, change voices, set scale,
+…), and edits the roll in real time. See `STAGE2_AI.md` for the design.
 
 ## Run it locally
 
 ```sh
 npm install
+cp .env.local.example .env.local   # then fill in ANTHROPIC_API_KEY for stage 2
 npm run dev          # http://localhost:3000
 npm run build        # production build
 npm run lint         # eslint
 node scripts/smoke.mjs   # headless playwright smoke test (needs `npm run dev`)
 ```
+
+Stage 1 (the piano roll) works without `ANTHROPIC_API_KEY`. Stage 2 (the
+chat agent) needs it — when missing, the chat panel surfaces a helpful
+error instead of a generic failure.
 
 ## Quick tour
 

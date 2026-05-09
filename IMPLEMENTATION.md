@@ -1,8 +1,12 @@
-# Implementation notes — Stage 1
+# Implementation notes
 
-This is the engineering log for the piano-roll codebase. Stage-2 (the chat
-agent) is described in `STAGE2_AI.md`; everything below is what shipped in the
-stage-1 PR.
+Engineering log for the piano-roll codebase. Stage 1 (the standalone piano
+roll) is documented below. Stage 2 (the Claude agent) lives in `STAGE2_AI.md`
+— the short version is: `src/lib/agent-tools.ts` defines the same operations
+the user has in the UI as pure functions on a Project; `src/app/api/chat/route.ts`
+runs a manual streaming agent loop with the Anthropic SDK, validates tool
+inputs with Zod, and streams NDJSON events back to the client. The chat panel
+applies project patches live as the agent works.
 
 ## Layout
 
