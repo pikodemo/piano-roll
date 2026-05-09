@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(gh --version)",
+      "Bash(gh auth *)",
+      "Bash(npx --yes create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --no-turbopack --use-npm --yes)",
+      "Bash(mkdir -p /tmp/piano-roll-docs)",
+      "Bash(mv /Users/laurent/src/piano-roll/SPEC.md /Users/laurent/src/piano-roll/PLAN.md /Users/laurent/src/piano-roll/STAGE2_AI.md /tmp/piano-roll-docs/)",
+      "Bash(mv /Users/laurent/src/piano-roll/.git /tmp/piano-roll-git)"
+    ]
+  }
+}
