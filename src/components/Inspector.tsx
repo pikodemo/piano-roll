@@ -9,6 +9,7 @@ import {
   chordLabel,
   chordOffsetsAbove,
   chordVoicing,
+  chordVoicingContaining,
   chordsContaining,
   diatonicChordAt,
   midiToName,
@@ -267,12 +268,20 @@ function SingleNoteInspector({ note }: { note: Note }) {
   const clearPreview = useStore((s) => s.clearPreview);
   const hover = useHoverPreview();
 
-  const chords = useMemo(() => chordsContaining(note.pitch), [note.pitch]);
+  // Sorted chord suggestions: diatonic-first (when a scale is set), then
+  // simpler triads, then 7ths, then suspensions, etc. The selected note's
+  // pitch class is guaranteed to be a chord tone of every entry.
+  const chords = useMemo(
+    () => chordsContaining(note.pitch, { scale: project.scale }),
+    [note.pitch, project.scale],
+  );
   const [idx, setIdx] = useState(0);
 
   const chord = chords[idx % Math.max(1, chords.length)] as Chord | undefined;
+  // Pinned voicing — the user's note keeps its exact MIDI position; the other
+  // chord tones cluster within an octave of it.
   const voicing = useMemo(
-    () => (chord ? chordVoicing(chord, note.pitch) : []),
+    () => (chord ? chordVoicingContaining(chord, note.pitch) : []),
     [chord, note.pitch],
   );
 

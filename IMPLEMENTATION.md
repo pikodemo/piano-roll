@@ -76,15 +76,27 @@ escape mid-drag.
 
 ## Chord cycler
 
-`chordsContaining(midi)` enumerates every (root × quality × inversion) chord
-whose pitch classes include the selected note. The Inspector cycles through the
-list with `[` / `]` and previews each one through the synth. `Enter` (or the
-"Add chord" button) commits the chord by inserting the missing chord tones at
-the same start/length as the selected note.
+`chordsContaining(midi, { scale })` enumerates every (root × quality) chord
+whose pitch classes include the selected note. Results are sorted simplest
+first via `chordSimplicityScore`:
+
+1. Diatonic-to-the-project-scale chords win a heavy bonus.
+2. Then triads before 7ths (count of chord tones).
+3. Then quality preference: maj/min < 7th-family < sus < dim/aug < exotic.
+4. Tie-broken by pinned-note position: chord-as-root, then 3rd, 5th, 7th, etc.
+
+The voicing is computed by `chordVoicingContaining(chord, pinMidi)`, which
+pins the selected note at its actual MIDI value and clusters the other chord
+tones within ±6 semitones of the pin. So picking `F maj` while `C4` is
+selected produces `A3 C4 F4` (an Fmaj/A voicing) rather than the
+chord-floating-above-the-pin layout the unpinned voicer would have given.
+
+Inversions are no longer enumerated as separate cycler entries — different
+chords already produce different voicings around the pin, so the duplicates
+were noise rather than signal.
 
 The cycler is its own subcomponent and gets a `key={note.id}` from the parent
-so it remounts (and resets local state) when the selection changes — cleaner
-than firing a `setState` from a `useEffect`.
+so it remounts (and resets local state) when the selection changes.
 
 ## Harmonize
 

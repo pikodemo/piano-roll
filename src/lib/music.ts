@@ -184,10 +184,52 @@ export function chordVoicing(chord: Chord, nearMidi: number): number[] {
   return rotated.map((semi) => bassMidi + (semi - rotated[0]));
 }
 
-// Return every (root, quality, inversion) chord whose pitch classes contain
-// the given pitch. Sorted by a rough "interesting-ness" heuristic that puts
-// triads first, then 7ths, then unusual ones.
-export function chordsContaining(midi: number, opts?: { qualities?: ChordQuality[] }): Chord[] {
+// "Simplicity" score for a chord, given a working scale and the pinned note.
+// Lower is simpler. Used to sort suggestions in the chord cycler.
+export function chordSimplicityScore(chord: Chord, scale: Scale | null | undefined, pinMidi: number): number {
+  let score = 0;
+  // Diatonic chords (rooted on a scale degree, with the diatonic quality) get
+  // a heavy bonus so they always come first when a scale is set.
+  if (scale) {
+    const triad = diatonicTriads(scale).find((t) => t.rootPc === chord.rootPc && t.quality === chord.quality);
+    if (triad) score -= 1000;
+  }
+  // Triads (3 tones) come before 7ths (4 tones).
+  score += CHORD_INTERVALS[chord.quality].length * 10;
+  // Then prefer common qualities to less-common ones.
+  const qualityRank: Record<ChordQuality, number> = {
+    maj: 0, min: 0,
+    "7": 2, maj7: 2, min7: 2,
+    sus4: 3, sus2: 4,
+    dim: 5, aug: 5,
+    dim7: 6, m7b5: 6, maj6: 6, min6: 6,
+  };
+  score += qualityRank[chord.quality];
+  // Tie-break: prefer chords where the pinned pitch is the root, then a 3rd,
+  // then a 5th, then a 7th, then less-stable positions.
+  const offset = ((pitchClass(pinMidi) - chord.rootPc) % 12 + 12) % 12;
+  const positionRank: Record<number, number> = {
+    0: 0,            // root
+    3: 1, 4: 1,      // 3rds
+    7: 2,            // perfect 5th
+    10: 3, 11: 3,    // 7ths
+    5: 4, 9: 4,      // 4ths / 6ths
+    2: 5,            // 2nd
+    6: 6, 8: 6,      // tritones, #5
+    1: 7,            // semitone (rare)
+  };
+  score += positionRank[offset] ?? 8;
+  return score;
+}
+
+// Return every (root, quality) chord whose pitch classes contain the given
+// pitch, sorted simplest-first. Inversions are not enumerated here — the
+// `chordVoicingContaining` helper already produces a different voicing per
+// chord by anchoring the pinned note in place.
+export function chordsContaining(
+  midi: number,
+  opts?: { qualities?: ChordQuality[]; scale?: Scale | null },
+): Chord[] {
   const targetPc = pitchClass(midi);
   const qualities: ChordQuality[] = opts?.qualities ?? [
     "maj", "min", "7", "maj7", "min7", "sus4", "sus2", "dim", "aug", "m7b5", "dim7", "maj6", "min6",
@@ -196,14 +238,34 @@ export function chordsContaining(midi: number, opts?: { qualities?: ChordQuality
   for (let root = 0; root < 12; root++) {
     for (const quality of qualities) {
       const intervals = CHORD_INTERVALS[quality];
-      for (let inv = 0; inv < intervals.length; inv++) {
-        const pcs = intervals.map((iv) => (root + iv) % 12);
-        if (!pcs.includes(targetPc)) continue;
-        out.push({ rootPc: root, quality, inversion: inv });
-      }
+      const pcs = intervals.map((iv) => (root + iv) % 12);
+      if (!pcs.includes(targetPc)) continue;
+      out.push({ rootPc: root, quality, inversion: 0 });
     }
   }
+  out.sort((a, b) => chordSimplicityScore(a, opts?.scale, midi) - chordSimplicityScore(b, opts?.scale, midi));
   return out;
+}
+
+// Voice the chord such that `pinMidi` is exactly one of the resulting MIDI
+// pitches. The other tones are placed in the nearest octave to `pinMidi` so
+// the voicing is a tight cluster around the pinned note.
+export function chordVoicingContaining(chord: Chord, pinMidi: number): number[] {
+  const pinPc = pitchClass(pinMidi);
+  const targetOffset = ((pinPc - chord.rootPc) % 12 + 12) % 12;
+  const intervals = CHORD_INTERVALS[chord.quality];
+  // If the pin's pitch class isn't a chord tone, fall back to the unpinned
+  // voicing (defensive — caller should never pass a non-member pin).
+  if (!intervals.includes(targetOffset)) return chordVoicing(chord, pinMidi);
+  const rootMidi = pinMidi - targetOffset;
+  const tones = intervals.map((i) => {
+    if (i === targetOffset) return pinMidi;
+    let m = rootMidi + i;
+    while (m < pinMidi - 6) m += 12;
+    while (m > pinMidi + 6) m -= 12;
+    return m;
+  });
+  return Array.from(new Set(tones)).sort((a, b) => a - b);
 }
 
 // Chord-stack helper: returns the chord-tone semitone offsets *above* the root
