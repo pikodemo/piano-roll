@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# piano-roll
 
-## Getting Started
+Browser-based piano roll for sketching musical arrangements, with a
+Claude-powered side chat (stage 2) that can read and rewrite your roll on
+request.
 
-First, run the development server:
+Stage 1 (this PR) ships the standalone piano roll. The chat panel is present
+but disabled until stage 2.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Run it locally
+
+```sh
+npm install
+npm run dev          # http://localhost:3000
+npm run build        # production build
+npm run lint         # eslint
+node scripts/smoke.mjs   # headless playwright smoke test (needs `npm run dev`)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Quick tour
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **Click** in the grid to draw a note; **drag** to extend it.
+- **Click + drag** an existing note to move it; the right edge resizes.
+- **Shift-drag** on empty grid is marquee-select; **Shift-click** on a note
+  toggles it in/out of the selection.
+- **Backspace** removes the selection. **↑/↓** transposes by a semitone
+  (Shift = octave). **←/→** nudges by the snap value.
+- **Space** plays / stops. Tempo, bar count, snap, and a working scale live in
+  the toolbar.
+- Add a **voice** (track) from the Voices row; the active voice is what new
+  notes go into. Mute / solo / delete per voice.
+- Select a single note to open the **chord cycler**: `[` / `]` cycles through
+  every chord that contains the note (major / minor / 7th / sus / inversions);
+  **Enter** commits the chord. The previewed chord is auditioned through the
+  synth.
+- Select one or more notes and use **Harmonize** to add a voice a 3rd / 5th /
+  6th / octave above or below — snapped to the working scale if one is set.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Everything is auto-saved to IndexedDB.
 
-## Learn More
+## Docs
 
-To learn more about Next.js, take a look at the following resources:
+- [`SPEC.md`](SPEC.md) — what the product does
+- [`PLAN.md`](PLAN.md) — staged delivery plan
+- [`STAGE2_AI.md`](STAGE2_AI.md) — design for the chat agent (next stage)
+- [`IMPLEMENTATION.md`](IMPLEMENTATION.md) — engineering notes for stage 1
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Stack
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Next.js 16 (app router) · React 19 · TypeScript · Tailwind v4 · Zustand · idb ·
+Web Audio · Playwright (smoke). Deployed on Vercel.
