@@ -22,6 +22,7 @@ export function ChatPanel() {
   const setChatError = useStore((s) => s.setChatError);
   const beginAgentTurn = useStore((s) => s.beginAgentTurn);
   const applyAgentPatch = useStore((s) => s.applyAgentPatch);
+  const endAgentTurn = useStore((s) => s.endAgentTurn);
   const setSelected = useStore((s) => s.setSelected);
 
   const [model, setModel] = useState(MODELS[0].id);
@@ -92,6 +93,10 @@ export function ChatPanel() {
       patchLastAssistant((cur) => ({ text: cur.text + (cur.text ? "\n\n" : "") + `_Error: ${msg}_` }));
     } finally {
       setChatBusy(false);
+      // Commit the whole agent turn as a single labeled history step. If the
+      // agent didn't actually change anything, endAgentTurn is a no-op.
+      const summary = text.length > 60 ? text.slice(0, 57) + "…" : text;
+      endAgentTurn(`Agent: ${summary}`);
     }
 
     function handleEvent(event: { type: string;[k: string]: unknown }) {

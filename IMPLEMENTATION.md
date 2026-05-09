@@ -136,6 +136,42 @@ goes through the standard `mutate` path — meaning undo, autosave, and the
 voice-color render all update naturally. The Inspector exposes a "Move to"
 row of voice chips when 1+ notes are selected and the project has 2+ voices.
 
+## History tree
+
+Every edit produces a `HistoryStep` (id, parentId, label, timestamp,
+snapshot). Steps form a tree rooted at the project's first commit; "branches"
+are the leaves of that tree. The store keeps:
+
+- `history.steps`: map of all steps by id
+- `history.headId`: the current step (the one whose snapshot is "live")
+- `history.redoStack`: linear redo path for Cmd-Shift-Z (cleared by any
+  non-redo action — same UX as a flat undo stack, just retraces the last
+  undone path through the tree)
+
+Mutations call `mutate(recipe, { label })`. The label is the human-readable
+name of the edit ("Add note", "Transpose +12", "Move note", "Set tempo",
+…). Two coalescing rules keep the tree small and meaningful:
+
+- **Same label + within 800ms + redo stack empty** → replace the previous
+  step's snapshot instead of creating a new one. A drag (which fires
+  hundreds of `updateNote` calls labeled "Move note") collapses to one
+  step at the end of the drag.
+- **`label: false`** skips history entirely (used for transient state like
+  the snap selector).
+
+Editing while at a non-tip step automatically forks: the new step's parent
+is the current head, the previous tip remains in the tree as a leaf with
+no children. `historyBranches(project)` returns those orphaned leaves so
+the UI can offer to switch back to them.
+
+Agent turns commit one step. ChatPanel calls `beginAgentTurn()` (records
+the head step), `applyAgentPatch()` for each tool patch (no per-call
+history), and `endAgentTurn(label)` when the request finishes — that
+creates one step parented to the *turn-base* step, labeled
+`Agent: <user prompt>`. So the user sees one history entry per turn even
+when the agent made a dozen edits, and reverting the whole turn is one
+click.
+
 ## MIDI input
 
 `src/lib/midi.ts` wraps `navigator.requestMIDIAccess()`. `AppShell` requests

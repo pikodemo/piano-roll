@@ -20,6 +20,39 @@ export interface Voice {
   soloed: boolean;
 }
 
+// ---------- History ----------
+//
+// Every edit produces a `HistoryStep`. Steps form a tree: each step has one
+// `parentId`, and "branches" are the leaves of that tree (steps with no
+// children). Restoring to a previous step + editing creates a child off that
+// step, leaving the prior tip preserved as a separate branch.
+
+export interface HistorySnapshot {
+  notes: Note[];
+  voices: Voice[];
+  tempo: number;
+  beatsPerBar: number;
+  bars: number;
+  scale: Scale | null;
+}
+
+export interface HistoryStep {
+  id: string;
+  parentId: string | null;
+  label: string;       // human-readable, e.g. "Add note", "Transpose +12"
+  timestamp: number;
+  snapshot: HistorySnapshot;
+}
+
+export interface History {
+  steps: Record<string, HistoryStep>;
+  headId: string;
+  // Linear redo path: stack of steps the user just undid (cleared by any
+  // non-redo action). Powers Cmd-Shift-Z without forcing the user to think
+  // about the tree.
+  redoStack: string[];
+}
+
 export interface ProjectMeta {
   id: string;
   name: string;
@@ -41,4 +74,5 @@ export interface Project extends ProjectMeta {
     maxPitch: number;
     snap: number;           // beats; e.g. 0.25 = 1/16
   };
+  history: History;
 }

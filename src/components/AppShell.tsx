@@ -10,6 +10,7 @@ import { VoiceList } from "./VoiceList";
 import { PianoRoll } from "./PianoRoll";
 import { Inspector } from "./Inspector";
 import { ChatPanel } from "./ChatPanel";
+import { HistoryBar } from "./HistoryBar";
 
 export function AppShell() {
   const project = useStore((s) => s.project);
@@ -104,6 +105,7 @@ export function AppShell() {
         <div className="min-h-0 flex-1">
           <PianoRoll />
         </div>
+        <HistoryBar />
         <div className="max-h-[35vh] overflow-auto">
           <Inspector />
         </div>

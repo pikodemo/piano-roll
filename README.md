@@ -70,6 +70,12 @@ error instead of a generic failure.
   detector, and adds the resulting notes to the active voice (anchored at
   the playhead, snapped to the grid). Sing a melody, click Stop, the notes
   appear.
+- The **History** bar (above the inspector) is a Git-like timeline of every
+  edit. Each step is named (Add note, Transpose +12, Set scale, etc.) and
+  the slider scrubs through the past — the roll updates live as you drag.
+  Editing while scrubbed back creates a new branch automatically; the
+  previous tip is preserved as a switchable branch button. Undo / redo go
+  through the same tree.
 
 Everything is auto-saved to IndexedDB.
 

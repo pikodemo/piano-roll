@@ -30,10 +30,10 @@ await page.mouse.move(box.x + 250, box.y + 260, { steps: 10 });
 await page.mouse.up();
 await page.waitForTimeout(150);
 
-// Hover the maj stack chord button to show ghost notes.
-const majBtn = page.locator("button[title*='maj chord rooted']").first();
-if (await majBtn.count() > 0) {
-  await majBtn.hover();
+// Open the history bar to show the slider + branches.
+const historyToggle = page.locator("button", { hasText: "History" }).first();
+if (await historyToggle.count() > 0) {
+  await historyToggle.click();
   await page.waitForTimeout(150);
 }
 

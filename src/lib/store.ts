@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { Note, Project, Voice } from "./types";
+import type { History, HistorySnapshot, HistoryStep, Note, Project, Voice } from "./types";
 import { clampMidi } from "./music";
 import { DEFAULT_INSTRUMENT } from "./audio";
 import { saveProject } from "./storage";
@@ -19,10 +19,33 @@ function uid(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+function snapshotOf(p: Project): HistorySnapshot {
+  return {
+    notes: p.notes,
+    voices: p.voices,
+    tempo: p.tempo,
+    beatsPerBar: p.beatsPerBar,
+    bars: p.bars,
+    scale: p.scale,
+  };
+}
+
+function applySnapshot(p: Project, s: HistorySnapshot): Project {
+  return {
+    ...p,
+    notes: s.notes,
+    voices: s.voices,
+    tempo: s.tempo,
+    beatsPerBar: s.beatsPerBar,
+    bars: s.bars,
+    scale: s.scale,
+  };
+}
+
 export function makeDefaultProject(): Project {
   const voiceId = uid();
   const now = Date.now();
-  return {
+  const project: Project = {
     id: uid(),
     name: "Untitled",
     createdAt: now,
@@ -42,15 +65,24 @@ export function makeDefaultProject(): Project {
       maxPitch: 84, // C6
       snap: 0.25,
     },
+    // Filled in below.
+    history: { steps: {}, headId: "", redoStack: [] },
   };
-}
-
-interface Snapshot {
-  notes: Note[];
-  voices: Voice[];
-  tempo: number;
-  bars: number;
-  scale: Project["scale"];
+  const rootId = uid();
+  project.history = {
+    steps: {
+      [rootId]: {
+        id: rootId,
+        parentId: null,
+        label: "New project",
+        timestamp: now,
+        snapshot: snapshotOf(project),
+      },
+    },
+    headId: rootId,
+    redoStack: [],
+  };
+  return project;
 }
 
 // Ghost notes shown by hover-preview (not persisted).
@@ -83,12 +115,12 @@ interface State {
   hoverPitch: number | null;
   previewNotes: PreviewNote[];
   tool: Tool;
-  // Stage-2 chat state. Not persisted.
   chatMessages: ChatMessage[];
   chatBusy: boolean;
   chatError: string | null;
-  past: Snapshot[];
-  future: Snapshot[];
+  // The snapshot the active agent turn started from. Set by beginAgentTurn,
+  // consumed by endAgentTurn to commit one history step for the whole turn.
+  agentTurnBaseStepId: string | null;
 }
 
 interface Actions {
@@ -101,13 +133,13 @@ interface Actions {
 
   addVoice: () => Voice;
   removeVoice: (id: string) => void;
-  updateVoice: (id: string, patch: Partial<Voice>) => void;
+  updateVoice: (id: string, patch: Partial<Voice>, opts?: { label?: string | false }) => void;
   setActiveVoice: (id: string) => void;
 
   addNote: (n: Omit<Note, "id">) => Note;
-  addNotes: (ns: Omit<Note, "id">[]) => Note[];
-  updateNote: (id: string, patch: Partial<Note>) => void;
-  updateNotes: (updates: Array<{ id: string } & Partial<Note>>) => void;
+  addNotes: (ns: Omit<Note, "id">[], opts?: { label?: string }) => Note[];
+  updateNote: (id: string, patch: Partial<Note>, opts?: { label?: string }) => void;
+  updateNotes: (updates: Array<{ id: string } & Partial<Note>>, opts?: { label?: string }) => void;
   deleteNotes: (ids: string[]) => void;
   transposeSelected: (semitones: number) => void;
   nudgeSelected: (beats: number) => void;
@@ -123,46 +155,120 @@ interface Actions {
   clearPreview: () => void;
   setTool: (tool: Tool) => void;
 
-  // Chat actions.
   appendChatMessage: (msg: ChatMessage) => void;
   patchLastAssistant: (patch: Partial<ChatMessage> | ((m: ChatMessage) => Partial<ChatMessage>)) => void;
   setChatBusy: (busy: boolean) => void;
   setChatError: (msg: string | null) => void;
   beginAgentTurn: () => void;
   applyAgentPatch: (project: Project) => void;
+  endAgentTurn: (label: string) => void;
 
-  // Reassign every selected note to a different voice.
   moveSelectedToVoice: (voiceId: string) => void;
 
   undo: () => void;
   redo: () => void;
+  // Jump HEAD to any step in the history tree. Editing afterwards forks from
+  // that step (existing tip preserved as a separate branch).
+  jumpToStep: (stepId: string) => void;
 }
 
-export const useStore = create<State & Actions>((set, get) => {
-  const snap = (p: Project): Snapshot => ({
-    notes: p.notes,
-    voices: p.voices,
-    tempo: p.tempo,
-    bars: p.bars,
-    scale: p.scale,
-  });
+// How long after the last edit a same-labeled mutation collapses into the
+// previous step instead of creating a new one. Critical for drag-edits, where
+// every pointermove fires updateNote — without coalescing the history fills
+// up with hundreds of "Move note" entries.
+const COALESCE_MS = 800;
 
-  // Mutate the project, push the previous snapshot to undo, schedule a save.
-  const mutate = (recipe: (p: Project) => Project | void, opts?: { history?: boolean }) => {
+export const useStore = create<State & Actions>((set, get) => {
+  // Mutate the project. `opts.label`:
+  //   - undefined → "Edit" (fallback)
+  //   - false → don't add a history step (transient, e.g. setSnap)
+  //   - string → use as the step label (coalesce with previous step if same
+  //              label and recent)
+  function mutate(
+    recipe: (p: Project) => Project | void,
+    opts: { label?: string | false } = {},
+  ) {
     const cur = get().project;
     if (!cur) return;
-    const prev = snap(cur);
     const draft: Project = { ...cur, notes: [...cur.notes], voices: [...cur.voices] };
     const result = recipe(draft);
-    const next = result ?? draft;
+    let next = result ?? draft;
     next.updatedAt = Date.now();
-    set((s) => ({
-      project: next,
-      past: opts?.history === false ? s.past : [...s.past.slice(-49), prev],
-      future: opts?.history === false ? s.future : [],
-    }));
+
+    if (opts.label === false) {
+      set({ project: next });
+      scheduleSave(next);
+      return;
+    }
+
+    const label = opts.label ?? "Edit";
+    const lastStep = cur.history.steps[cur.history.headId];
+    const now = Date.now();
+
+    let history: History;
+    if (lastStep && lastStep.label === label && now - lastStep.timestamp < COALESCE_MS && cur.history.redoStack.length === 0) {
+      // Coalesce: replace the last step's snapshot.
+      const updated: HistoryStep = {
+        ...lastStep,
+        snapshot: snapshotOf(next),
+        timestamp: now,
+      };
+      history = {
+        ...cur.history,
+        steps: { ...cur.history.steps, [lastStep.id]: updated },
+      };
+    } else {
+      // New step.
+      const newStep: HistoryStep = {
+        id: uid(),
+        parentId: cur.history.headId,
+        label,
+        timestamp: now,
+        snapshot: snapshotOf(next),
+      };
+      history = {
+        steps: { ...cur.history.steps, [newStep.id]: newStep },
+        headId: newStep.id,
+        redoStack: [],
+      };
+    }
+    next = { ...next, history };
+    set({ project: next });
     scheduleSave(next);
-  };
+  }
+
+  // Move HEAD to a different step, applying that step's snapshot. Used by
+  // undo / redo / jumpToStep / restore. `redoBehavior` controls how the redo
+  // stack is updated.
+  function gotoStep(stepId: string, redoBehavior: "clear" | "push" | "pop") {
+    const cur = get().project;
+    if (!cur) return;
+    const step = cur.history.steps[stepId];
+    if (!step) return;
+    let redoStack = cur.history.redoStack;
+    if (redoBehavior === "clear") {
+      redoStack = [];
+    } else if (redoBehavior === "push") {
+      // Push the previous head onto the redo stack so redo retraces the path.
+      if (cur.history.headId !== stepId) {
+        redoStack = [...redoStack, cur.history.headId];
+      }
+    } else if (redoBehavior === "pop") {
+      redoStack = redoStack.slice(0, -1);
+    }
+    const next: Project = {
+      ...applySnapshot(cur, step.snapshot),
+      updatedAt: Date.now(),
+      history: { ...cur.history, headId: stepId, redoStack },
+    };
+    set((s) => {
+      // Drop any selection IDs that no longer exist in the snapshot.
+      const validIds = new Set(next.notes.map((n) => n.id));
+      const sel = new Set([...s.selectedIds].filter((id) => validIds.has(id)));
+      return { project: next, selectedIds: sel };
+    });
+    scheduleSave(next);
+  }
 
   return {
     project: null,
@@ -176,35 +282,33 @@ export const useStore = create<State & Actions>((set, get) => {
     chatMessages: [],
     chatBusy: false,
     chatError: null,
-    past: [],
-    future: [],
+    agentTurnBaseStepId: null,
 
     setProject: (p) => set({
       project: p,
       activeVoiceId: p.voices[0]?.id ?? null,
       selectedIds: new Set(),
-      past: [],
-      future: [],
       playheadBeat: 0,
       previewNotes: [],
       // Default to Select mode if the project already has notes — we'd rather
       // not have a click create a stray note on top of existing material. A
       // blank canvas opens in Draw so the user can start sketching immediately.
       tool: p.notes.length > 0 ? "select" : "draw",
+      agentTurnBaseStepId: null,
     }),
 
-    setName:  (name)  => mutate((p) => { p.name = name; }, { history: false }),
-    setTempo: (bpm)   => mutate((p) => { p.tempo = Math.max(20, Math.min(300, Math.round(bpm))); }),
-    setBars:  (bars)  => mutate((p) => { p.bars = Math.max(1, Math.min(64, Math.round(bars))); }),
-    setSnap:  (snap)  => mutate((p) => { p.view = { ...p.view, snap }; }, { history: false }),
-    setScale: (scale) => mutate((p) => { p.scale = scale; }),
+    setName:  (name)  => mutate((p) => { p.name = name; }, { label: false }),
+    setTempo: (bpm)   => mutate((p) => { p.tempo = Math.max(20, Math.min(300, Math.round(bpm))); }, { label: `Set tempo` }),
+    setBars:  (bars)  => mutate((p) => { p.bars = Math.max(1, Math.min(64, Math.round(bars))); }, { label: `Set length` }),
+    setSnap:  (snap)  => mutate((p) => { p.view = { ...p.view, snap }; }, { label: false }),
+    setScale: (scale) => mutate((p) => { p.scale = scale; }, { label: scale ? `Set scale` : `Clear scale` }),
 
     addVoice: () => {
       const cur = get().project;
       const id = uid();
       const color = VOICE_COLORS[((cur?.voices.length ?? 0)) % VOICE_COLORS.length];
       const voice: Voice = { id, name: `Voice ${(cur?.voices.length ?? 0) + 1}`, color, instrument: DEFAULT_INSTRUMENT, volume: 1, muted: false, soloed: false };
-      mutate((p) => { p.voices = [...p.voices, voice]; });
+      mutate((p) => { p.voices = [...p.voices, voice]; }, { label: "Add voice" });
       set({ activeVoiceId: id });
       return voice;
     },
@@ -214,41 +318,62 @@ export const useStore = create<State & Actions>((set, get) => {
       mutate((p) => {
         p.voices = p.voices.filter((v) => v.id !== id);
         p.notes = p.notes.filter((n) => n.voiceId !== id);
-      });
+      }, { label: "Delete voice" });
       const remaining = get().project?.voices ?? [];
       if (get().activeVoiceId === id) set({ activeVoiceId: remaining[0]?.id ?? null });
     },
-    updateVoice: (id, patch) => mutate((p) => {
-      p.voices = p.voices.map((v) => v.id === id ? { ...v, ...patch } : v);
-    }),
+    // Default labels per kind of voice change. Volume slider is `false` so
+    // the slider doesn't fill history with thousands of tiny commits.
+    updateVoice: (id, patch, opts) => {
+      let label: string | false;
+      if (opts?.label !== undefined) label = opts.label;
+      else if (patch.name !== undefined) label = "Rename voice";
+      else if (patch.instrument !== undefined) label = "Change instrument";
+      else if (patch.color !== undefined) label = "Recolor voice";
+      else if (patch.muted !== undefined) label = "Mute voice";
+      else if (patch.soloed !== undefined) label = "Solo voice";
+      else if (patch.volume !== undefined) label = false;
+      else label = "Update voice";
+      mutate((p) => {
+        p.voices = p.voices.map((v) => v.id === id ? { ...v, ...patch } : v);
+      }, { label });
+    },
     setActiveVoice: (id) => set({ activeVoiceId: id }),
 
     addNote: (n) => {
       const note: Note = { id: uid(), ...n, pitch: clampMidi(n.pitch) };
-      mutate((p) => { p.notes = [...p.notes, note]; });
+      mutate((p) => { p.notes = [...p.notes, note]; }, { label: "Add note" });
       return note;
     },
-    addNotes: (ns) => {
+    addNotes: (ns, opts) => {
       const created: Note[] = ns.map((n) => ({ id: uid(), ...n, pitch: clampMidi(n.pitch) }));
-      mutate((p) => { p.notes = [...p.notes, ...created]; });
+      const label = opts?.label ?? `Add ${created.length} note${created.length === 1 ? "" : "s"}`;
+      mutate((p) => { p.notes = [...p.notes, ...created]; }, { label });
       return created;
     },
-    updateNote: (id, patch) => mutate((p) => {
-      p.notes = p.notes.map((n) => n.id === id ? { ...n, ...patch, pitch: patch.pitch !== undefined ? clampMidi(patch.pitch) : n.pitch } : n);
-    }),
-    updateNotes: (updates) => mutate((p) => {
-      const map = new Map(updates.map((u) => [u.id, u]));
-      p.notes = p.notes.map((n) => {
-        const u = map.get(n.id);
-        if (!u) return n;
-        const next = { ...n, ...u };
-        if (u.pitch !== undefined) next.pitch = clampMidi(u.pitch);
-        return next;
-      });
-    }),
+    updateNote: (id, patch, opts) => {
+      const label = opts?.label ?? (patch.length !== undefined ? "Resize note" : "Move note");
+      mutate((p) => {
+        p.notes = p.notes.map((n) => n.id === id ? { ...n, ...patch, pitch: patch.pitch !== undefined ? clampMidi(patch.pitch) : n.pitch } : n);
+      }, { label });
+    },
+    updateNotes: (updates, opts) => {
+      const label = opts?.label ?? "Move notes";
+      mutate((p) => {
+        const map = new Map(updates.map((u) => [u.id, u]));
+        p.notes = p.notes.map((n) => {
+          const u = map.get(n.id);
+          if (!u) return n;
+          const next = { ...n, ...u };
+          if (u.pitch !== undefined) next.pitch = clampMidi(u.pitch);
+          return next;
+        });
+      }, { label });
+    },
     deleteNotes: (ids) => {
       const set_ = new Set(ids);
-      mutate((p) => { p.notes = p.notes.filter((n) => !set_.has(n.id)); });
+      const label = ids.length === 1 ? "Delete note" : `Delete ${ids.length} notes`;
+      mutate((p) => { p.notes = p.notes.filter((n) => !set_.has(n.id)); }, { label });
       set((s) => {
         const next = new Set(s.selectedIds);
         for (const id of ids) next.delete(id);
@@ -257,15 +382,18 @@ export const useStore = create<State & Actions>((set, get) => {
     },
     transposeSelected: (semitones) => {
       const ids = get().selectedIds;
+      if (ids.size === 0) return;
+      const label = `Transpose ${semitones >= 0 ? "+" : ""}${semitones}`;
       mutate((p) => {
         p.notes = p.notes.map((n) => ids.has(n.id) ? { ...n, pitch: clampMidi(n.pitch + semitones) } : n);
-      });
+      }, { label });
     },
     nudgeSelected: (beats) => {
       const ids = get().selectedIds;
+      if (ids.size === 0) return;
       mutate((p) => {
         p.notes = p.notes.map((n) => ids.has(n.id) ? { ...n, start: Math.max(0, n.start + beats) } : n);
-      });
+      }, { label: "Nudge" });
     },
     moveSelectedToVoice: (voiceId) => {
       const ids = get().selectedIds;
@@ -273,7 +401,7 @@ export const useStore = create<State & Actions>((set, get) => {
       mutate((p) => {
         if (!p.voices.some((v) => v.id === voiceId)) return;
         p.notes = p.notes.map((n) => ids.has(n.id) ? { ...n, voiceId } : n);
-      });
+      }, { label: "Move to voice" });
     },
 
     setSelected: (ids) => set({ selectedIds: new Set(ids) }),
@@ -311,39 +439,91 @@ export const useStore = create<State & Actions>((set, get) => {
     setChatBusy: (busy) => set({ chatBusy: busy }),
     setChatError: (msg) => set({ chatError: msg }),
 
-    // Capture one undo snapshot before the agent makes changes for this turn.
-    // Subsequent applyAgentPatch calls during the same turn don't push history.
-    beginAgentTurn: () => set((s) => {
-      if (!s.project) return s;
-      return { past: [...s.past.slice(-49), snap(s.project)], future: [] };
-    }),
-    // Replace project state without pushing to history; persist via the same
-    // debounced save path used by user edits.
+    // Remember the HEAD step at turn start, so endAgentTurn can decide whether
+    // anything actually changed and emit one consolidated history step.
+    beginAgentTurn: () => set((s) => ({
+      agentTurnBaseStepId: s.project?.history.headId ?? null,
+    })),
+    // Replace project state without committing a history step. The agent
+    // streams patches through here while the LLM is still talking.
     applyAgentPatch: (project) => {
-      const next = { ...project, updatedAt: Date.now() };
+      const cur = get().project;
+      if (!cur) return;
+      // Preserve the existing history (in particular: don't let the agent's
+      // patch overwrite headId / steps if it ever included them).
+      const next: Project = { ...project, history: cur.history, updatedAt: Date.now() };
       set({ project: next });
+      scheduleSave(next);
+    },
+    endAgentTurn: (label) => {
+      const cur = get().project;
+      const baseStepId = get().agentTurnBaseStepId;
+      if (!cur || !baseStepId) {
+        set({ agentTurnBaseStepId: null });
+        return;
+      }
+      const baseStep = cur.history.steps[baseStepId];
+      // Only commit if state actually changed compared to the turn's start.
+      const same = baseStep && JSON.stringify(snapshotOf(cur)) === JSON.stringify(baseStep.snapshot);
+      if (same) {
+        set({ agentTurnBaseStepId: null });
+        return;
+      }
+      const newStep: HistoryStep = {
+        id: uid(),
+        // Branch from the baseStep so the agent's edits live as a single step
+        // off the position where the user invoked the agent, even if the user
+        // had scrubbed elsewhere meanwhile.
+        parentId: baseStepId,
+        label,
+        timestamp: Date.now(),
+        snapshot: snapshotOf(cur),
+      };
+      const history: History = {
+        steps: { ...cur.history.steps, [newStep.id]: newStep },
+        headId: newStep.id,
+        redoStack: [],
+      };
+      const next: Project = { ...cur, history, updatedAt: Date.now() };
+      set({ project: next, agentTurnBaseStepId: null });
       scheduleSave(next);
     },
 
     undo: () => {
-      const { past, project } = get();
-      if (!project || past.length === 0) return;
-      const prev = past[past.length - 1];
-      const newPast = past.slice(0, -1);
-      const cur = snap(project);
-      const next: Project = { ...project, ...prev, updatedAt: Date.now() };
-      set({ project: next, past: newPast, future: [...get().future, cur] });
+      const cur = get().project;
+      if (!cur) return;
+      const head = cur.history.steps[cur.history.headId];
+      if (!head?.parentId) return;
+      const prevHeadId = head.id;
+      const cur1 = get().project!;
+      const next: Project = {
+        ...applySnapshot(cur1, cur.history.steps[head.parentId].snapshot),
+        updatedAt: Date.now(),
+        history: {
+          ...cur1.history,
+          headId: head.parentId,
+          redoStack: [...cur1.history.redoStack, prevHeadId],
+        },
+      };
+      set((s) => {
+        const validIds = new Set(next.notes.map((n) => n.id));
+        const sel = new Set([...s.selectedIds].filter((id) => validIds.has(id)));
+        return { project: next, selectedIds: sel };
+      });
       scheduleSave(next);
     },
     redo: () => {
-      const { future, project } = get();
-      if (!project || future.length === 0) return;
-      const fwd = future[future.length - 1];
-      const newFuture = future.slice(0, -1);
-      const cur = snap(project);
-      const next: Project = { ...project, ...fwd, updatedAt: Date.now() };
-      set({ project: next, future: newFuture, past: [...get().past, cur] });
-      scheduleSave(next);
+      const cur = get().project;
+      if (!cur) return;
+      const stack = cur.history.redoStack;
+      if (stack.length === 0) return;
+      const targetId = stack[stack.length - 1];
+      const target = cur.history.steps[targetId];
+      if (!target) return;
+      gotoStep(targetId, "pop");
+    },
+    jumpToStep: (stepId) => {
+      gotoStep(stepId, "clear");
     },
   };
 });
@@ -354,4 +534,31 @@ function scheduleSave(project: Project) {
   saveTimer = setTimeout(() => {
     saveProject(project).catch((err) => console.error("save failed", err));
   }, 250);
+}
+
+// ---------- Public history helpers ----------
+
+// Path from root to HEAD (chronological order). Used by the slider.
+export function currentHistoryPath(project: Project | null): HistoryStep[] {
+  if (!project) return [];
+  const path: HistoryStep[] = [];
+  let cur: HistoryStep | undefined = project.history.steps[project.history.headId];
+  while (cur) {
+    path.unshift(cur);
+    cur = cur.parentId ? project.history.steps[cur.parentId] : undefined;
+  }
+  return path;
+}
+
+// All branch tips (steps with no children), excluding HEAD. Used by the
+// "branches" picker so the user can switch back to a previously-cut path.
+export function historyBranches(project: Project | null): HistoryStep[] {
+  if (!project) return [];
+  const childCount = new Map<string, number>();
+  for (const s of Object.values(project.history.steps)) {
+    if (s.parentId) childCount.set(s.parentId, (childCount.get(s.parentId) ?? 0) + 1);
+  }
+  return Object.values(project.history.steps)
+    .filter((s) => (childCount.get(s.id) ?? 0) === 0 && s.id !== project.history.headId)
+    .sort((a, b) => b.timestamp - a.timestamp);
 }

@@ -37,13 +37,42 @@ export async function loadProject(id: string): Promise<Project | undefined> {
 
 // Forward-compat: fill in fields added after the project was originally saved.
 function migrate(p: Project): Project {
+  const voices = p.voices.map((v) => ({
+    ...v,
+    instrument: v.instrument ?? DEFAULT_INSTRUMENT,
+    volume: v.volume ?? 1,
+  }));
+  const next: Project = { ...p, voices };
+  // Seed the history with a single root step from the current state.
+  if (!next.history) {
+    const rootId = uid();
+    next.history = {
+      steps: {
+        [rootId]: {
+          id: rootId,
+          parentId: null,
+          label: "Loaded project",
+          timestamp: next.createdAt ?? Date.now(),
+          snapshot: snapshotOf(next),
+        },
+      },
+      headId: rootId,
+      redoStack: [],
+    };
+  }
+  return next;
+}
+
+function uid(): string { return Math.random().toString(36).slice(2, 10); }
+
+function snapshotOf(p: Project) {
   return {
-    ...p,
-    voices: p.voices.map((v) => ({
-      ...v,
-      instrument: v.instrument ?? DEFAULT_INSTRUMENT,
-      volume: v.volume ?? 1,
-    })),
+    notes: p.notes,
+    voices: p.voices,
+    tempo: p.tempo,
+    beatsPerBar: p.beatsPerBar,
+    bars: p.bars,
+    scale: p.scale,
   };
 }
 
