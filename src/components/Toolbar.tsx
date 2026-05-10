@@ -122,13 +122,47 @@ function ExportButton() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="rounded bg-gray-800 px-2 py-1 text-xs hover:bg-gray-700"
+        className="rounded bg-emerald-700 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-600"
         title="Export to sheet music, guitar tab, or Jianpu"
       >
-        Export
+        ↓ Export
       </button>
       <ExportModal open={open} onClose={() => setOpen(false)} />
     </>
+  );
+}
+
+function LayoutToggles() {
+  const layout = useStore((s) => s.layout);
+  const setLayout = useStore((s) => s.setLayout);
+  const cls = (active: boolean) =>
+    `rounded px-2 py-1 text-xs font-medium ${active ? "bg-white text-gray-900" : "bg-gray-800 text-gray-200 hover:bg-gray-700"}`;
+  return (
+    <div className="flex items-center gap-1" role="group" aria-label="Layout">
+      <button
+        onClick={() => setLayout({ historyOpen: !layout.historyOpen })}
+        className={cls(layout.historyOpen)}
+        title={layout.historyOpen ? "Hide history panel" : "Show history panel (left column)"}
+        aria-pressed={layout.historyOpen}
+      >
+        ≡ History
+      </button>
+      <button
+        onClick={() => setLayout({ inspectorPos: layout.inspectorPos === "bottom" ? "right" : "bottom" })}
+        className="rounded bg-gray-800 px-2 py-1 text-xs font-medium text-gray-200 hover:bg-gray-700"
+        title={`Inspector position: ${layout.inspectorPos} — click to move ${layout.inspectorPos === "bottom" ? "to right column" : "to bottom"}`}
+      >
+        Inspector {layout.inspectorPos === "bottom" ? "⬇" : "➡"}
+      </button>
+      <button
+        onClick={() => setLayout({ chatOpen: !layout.chatOpen })}
+        className={cls(layout.chatOpen)}
+        title={layout.chatOpen ? "Hide chat panel" : "Show chat panel (right column)"}
+        aria-pressed={layout.chatOpen}
+      >
+        💬 Chat
+      </button>
+    </div>
   );
 }
 
@@ -274,10 +308,9 @@ export function Toolbar() {
   return (
     <div className="flex flex-wrap items-center gap-3 border-b border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
       <ProjectsMenu />
+      <LayoutToggles />
+      <span className="h-5 w-px bg-gray-700" />
       <ToolToggle />
-      <RecordButton />
-      <ExportButton />
-      <MIDIStatus />
       <button
         onClick={toggle}
         className="rounded bg-blue-600 px-3 py-1 font-semibold hover:bg-blue-500"
@@ -285,6 +318,9 @@ export function Toolbar() {
       >
         {isPlaying ? "■ Stop" : "▶ Play"}
       </button>
+      <RecordButton />
+      <ExportButton />
+      <MIDIStatus />
       <div className="flex items-center gap-1">
         <label className="text-gray-400">Tempo</label>
         <input

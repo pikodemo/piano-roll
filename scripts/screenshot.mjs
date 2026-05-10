@@ -30,12 +30,9 @@ await page.mouse.move(box.x + 250, box.y + 260, { steps: 10 });
 await page.mouse.up();
 await page.waitForTimeout(150);
 
-// Open the export modal to show all three formats.
-await page.click("button[title*='Export']");
+// Open the history panel so the new left column is visible in the screenshot.
+await page.click("button:has-text('≡ History')");
 await page.waitForTimeout(150);
-// Switch to Jianpu so the preview shows the most distinctive output.
-await page.click("input[type=radio] >> nth=2");
-await page.waitForTimeout(120);
 
 await page.screenshot({ path: "/tmp/piano-roll.png", fullPage: false });
 console.log("wrote /tmp/piano-roll.png");

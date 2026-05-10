@@ -120,43 +120,40 @@ const idbHas = await page.evaluate(async () => {
 if (!idbHas) fail("IndexedDB 'piano-roll' database not created");
 log("IndexedDB project saved");
 
-// --- History bar: open it, scrub back, branch, scrub between branches ---
-// At this point we've added 4 notes (the chord commit). The history should
-// have 5 steps: New project + 1 Add note + 1 Backspace + 1 Add chord. (The
-// initial 2 clicks coalesce because they're both "Add note" within 800ms.)
-const histToggle = page.locator("button", { hasText: "History" }).first();
+// --- History panel (left column): toggle open, scrub, branch, switch back ---
+// Click the "≡ History" toolbar toggle to reveal the left column.
+const histToggle = page.locator("button", { hasText: /^≡ History$/ });
 await histToggle.click();
-await page.waitForTimeout(150);
+await page.waitForTimeout(200);
 
-const histText = await page.locator("body").innerText();
-const histMatch = /History\s+(\d+)\s*\/\s*(\d+)/.exec(histText);
-if (!histMatch) fail(`History bar didn't open. Body: ${histText.slice(0, 800)}`);
+const panelText = await page.locator("body").innerText();
+const histMatch = /(\d+)\s*\/\s*(\d+)\s+on this branch/.exec(panelText);
+if (!histMatch) fail(`History panel didn't open. Body: ${panelText.slice(0, 800)}`);
 const stepCount = Number(histMatch[2]);
 if (stepCount < 3) fail(`Expected >= 3 history steps, got ${stepCount}`);
-log(`history bar: ${histMatch[0]}`);
+log(`history panel: ${histMatch[0]}`);
 
-// Scrub the slider back to step 1 (the "New project" root).
-const slider = page.locator("input[type=range][aria-label='History position']");
-if ((await slider.count()) === 0) fail("History slider not visible");
+// Scrub the slider back to step 1 (the root).
+const slider = page.locator("input[aria-label='History scrubber']");
+if ((await slider.count()) === 0) fail("History slider not visible in panel");
 await slider.fill("0");
 await page.waitForTimeout(200);
 let n2 = await page.locator("[data-note-id]").count();
 if (n2 !== 0) fail(`Expected 0 notes after scrubbing to root, got ${n2}`);
 log(`scrub to root: ${n2} notes`);
 
-// Make an edit while at the root — should create a new branch.
+// Edit at root → fork.
 const grid3 = await gridSvg.boundingBox();
-// We're in select mode (project loaded with notes). Switch to draw to add.
 await page.click("button:has-text('Draw')");
 await page.waitForTimeout(50);
 await page.mouse.click(grid3.x + 200, grid3.y + 250);
 await page.waitForTimeout(200);
 const branchBody = await page.locator("body").innerText();
-if (!branchBody.includes("other branch")) fail(`Expected 'other branch' indicator after edit-from-root. Body: ${branchBody.slice(0, 800)}`);
+if (!/other branches/i.test(branchBody)) fail(`Expected 'Other branches' indicator after edit-from-root. Body: ${branchBody.slice(0, 800)}`);
 log(`branching: created a side branch`);
 
-// The original branch tip should now appear as a switchable button.
-const branchBtns = page.locator("button[title*='Switch to this branch tip']");
+// Switch back to the original branch tip.
+const branchBtns = page.locator("button[title*='Switch HEAD to this branch tip']");
 if ((await branchBtns.count()) === 0) fail("Branch switch buttons missing");
 await branchBtns.first().click();
 await page.waitForTimeout(200);
@@ -164,9 +161,9 @@ const restoredCount = await page.locator("[data-note-id]").count();
 if (restoredCount === 0) fail(`Expected restored branch to have notes, got ${restoredCount}`);
 log(`branch switch: restored to ${restoredCount} notes`);
 
-// Re-collapse the history bar.
+// Hide the history panel for the rest of the tests (default state).
 await histToggle.click();
-await page.waitForTimeout(50);
+await page.waitForTimeout(100);
 
 // Re-select all notes (history switch clears the selection because the
 // previous selection IDs may not exist in the new snapshot).
@@ -178,6 +175,29 @@ await page.mouse.down();
 await page.mouse.move(reBox.x + reBox.width - 30, reBox.y + reBox.height - 100, { steps: 10 });
 await page.mouse.up();
 await page.waitForTimeout(150);
+
+// --- Layout toggles: Chat hide / show, Inspector position ---
+const chatToggle = page.locator("button", { hasText: /^💬 Chat$/ });
+await chatToggle.click();   // hide
+await page.waitForTimeout(120);
+let chatHidden = (await page.locator("textarea[placeholder*='Ask the agent']").count()) === 0;
+if (!chatHidden) fail("Chat panel didn't hide when toggle was clicked");
+log("chat toggle: hidden");
+await chatToggle.click();   // show
+await page.waitForTimeout(120);
+const chatBack = (await page.locator("textarea[placeholder*='Ask the agent']").count()) > 0;
+if (!chatBack) fail("Chat panel didn't reappear when toggle was re-clicked");
+log("chat toggle: visible again");
+
+const inspectorPosBtn = page.locator("button[title*='Inspector position:']");
+const beforeText = await inspectorPosBtn.first().innerText();
+await inspectorPosBtn.first().click(); // bottom → right
+await page.waitForTimeout(120);
+const afterText = await inspectorPosBtn.first().innerText();
+if (afterText === beforeText) fail(`Inspector position toggle did not change. Before: ${beforeText} After: ${afterText}`);
+log(`inspector position toggled: ${beforeText} → ${afterText}`);
+await inspectorPosBtn.first().click(); // back to bottom for the rest of tests
+await page.waitForTimeout(120);
 
 // --- Export modal: open, switch formats, copy works ---
 await page.click("button[title*='Export']");

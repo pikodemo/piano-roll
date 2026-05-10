@@ -24,6 +24,7 @@ export function ChatPanel() {
   const applyAgentPatch = useStore((s) => s.applyAgentPatch);
   const endAgentTurn = useStore((s) => s.endAgentTurn);
   const setSelected = useStore((s) => s.setSelected);
+  const setLayout = useStore((s) => s.setLayout);
 
   const [model, setModel] = useState(MODELS[0].id);
   const [input, setInput] = useState("");
@@ -144,19 +145,26 @@ export function ChatPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col border-l border-gray-700 bg-gray-900 text-gray-100">
+    <div className="flex h-full flex-col bg-gray-900 text-gray-100">
       <div className="flex items-center justify-between border-b border-gray-700 px-3 py-2 text-sm">
         <span className="font-semibold">Chat</span>
-        <select
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          className="rounded bg-gray-800 px-2 py-1 text-xs"
-          disabled={busy}
-        >
-          {MODELS.map((m) => (
-            <option key={m.id} value={m.id}>{m.label}</option>
-          ))}
-        </select>
+        <div className="flex items-center gap-1">
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="rounded bg-gray-800 px-2 py-1 text-xs"
+            disabled={busy}
+          >
+            {MODELS.map((m) => (
+              <option key={m.id} value={m.id}>{m.label}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => setLayout({ chatOpen: false })}
+            className="rounded px-1.5 text-xs text-gray-400 hover:bg-gray-800"
+            title="Hide chat panel"
+          >✕</button>
+        </div>
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 text-sm">
@@ -205,6 +213,21 @@ export function ChatPanel() {
         </div>
       </div>
     </div>
+  );
+}
+
+// Slim re-open handle shown on the right edge when the chat is hidden.
+export function ChatReopenHandle() {
+  const setLayout = useStore((s) => s.setLayout);
+  return (
+    <button
+      onClick={() => setLayout({ chatOpen: true })}
+      className="flex h-full w-5 items-center justify-center border-l border-gray-800 bg-gray-900/60 text-xs text-gray-500 hover:bg-gray-800 hover:text-gray-200"
+      title="Show chat panel"
+      aria-label="Open chat panel"
+    >
+      ◀
+    </button>
   );
 }
 

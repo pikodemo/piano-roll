@@ -70,12 +70,17 @@ error instead of a generic failure.
   detector, and adds the resulting notes to the active voice (anchored at
   the playhead, snapped to the grid). Sing a melody, click Stop, the notes
   appear.
-- The **History** bar (above the inspector) is a Git-like timeline of every
-  edit. Each step is named (Add note, Transpose +12, Set scale, etc.) and
-  the slider scrubs through the past — the roll updates live as you drag.
-  Editing while scrubbed back creates a new branch automatically; the
-  previous tip is preserved as a switchable branch button. Undo / redo go
-  through the same tree.
+- The **History** panel (toggle `≡ History` in the toolbar to open the left
+  column) is a Git-like timeline of every edit, shown git-log style with
+  the current step highlighted. Each step is named (Add note, Transpose
+  +12, Set scale, etc.). A slider at the top of the panel scrubs the roll
+  in real time; clicking any step jumps to it. Editing while scrubbed back
+  creates a new branch automatically; previous tips appear as switchable
+  buttons under "Other branches". Undo / redo go through the same tree.
+- The layout has three configurable panels: **≡ History** (left),
+  **💬 Chat** (right), and the **Inspector ⬇** position (bottom of the
+  editor or stacked above chat in the right column). Each toggle is in
+  the toolbar; preferences persist across reloads.
 - The **Export** button in the toolbar opens a modal that converts the
   selected voices (or just the selected notes) to **MusicXML** (universal
   sheet music — open in MuseScore et al. for printing/PDF), **ASCII

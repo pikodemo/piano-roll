@@ -91,6 +91,41 @@ export interface PreviewNote { pitch: number; start: number; length: number }
 // Editor tool modes.
 export type Tool = "select" | "draw";
 
+// Persisted UI layout (per device, in localStorage).
+export interface UILayout {
+  historyOpen: boolean;
+  chatOpen: boolean;
+  inspectorPos: "bottom" | "right";
+}
+
+const DEFAULT_LAYOUT: UILayout = {
+  historyOpen: false,
+  chatOpen: true,
+  inspectorPos: "bottom",
+};
+
+const LAYOUT_KEY = "pianoroll-layout";
+
+export function loadLayoutFromStorage(): UILayout {
+  if (typeof window === "undefined") return DEFAULT_LAYOUT;
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_KEY);
+    if (!raw) return DEFAULT_LAYOUT;
+    return { ...DEFAULT_LAYOUT, ...JSON.parse(raw) };
+  } catch {
+    return DEFAULT_LAYOUT;
+  }
+}
+
+function saveLayoutToStorage(layout: UILayout) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+  } catch {
+    // ignored — quota errors etc.
+  }
+}
+
 // In-memory chat state used by the stage-2 agent.
 export interface ChatToolCall {
   id: string;
@@ -115,6 +150,7 @@ interface State {
   hoverPitch: number | null;
   previewNotes: PreviewNote[];
   tool: Tool;
+  layout: UILayout;
   chatMessages: ChatMessage[];
   chatBusy: boolean;
   chatError: string | null;
@@ -154,6 +190,7 @@ interface Actions {
   setPreview: (notes: PreviewNote[]) => void;
   clearPreview: () => void;
   setTool: (tool: Tool) => void;
+  setLayout: (patch: Partial<UILayout>) => void;
 
   appendChatMessage: (msg: ChatMessage) => void;
   patchLastAssistant: (patch: Partial<ChatMessage> | ((m: ChatMessage) => Partial<ChatMessage>)) => void;
@@ -279,6 +316,7 @@ export const useStore = create<State & Actions>((set, get) => {
     hoverPitch: null,
     previewNotes: [],
     tool: "draw",
+    layout: DEFAULT_LAYOUT,
     chatMessages: [],
     chatBusy: false,
     chatError: null,
@@ -419,6 +457,11 @@ export const useStore = create<State & Actions>((set, get) => {
     setPreview: (notes) => set({ previewNotes: notes }),
     clearPreview: () => set((s) => s.previewNotes.length === 0 ? s : { previewNotes: [] }),
     setTool: (tool) => set({ tool }),
+    setLayout: (patch) => set((s) => {
+      const next = { ...s.layout, ...patch };
+      saveLayoutToStorage(next);
+      return { layout: next };
+    }),
 
     appendChatMessage: (msg) => set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
     patchLastAssistant: (patch) => set((s) => {
