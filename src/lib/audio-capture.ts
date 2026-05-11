@@ -1,13 +1,16 @@
 // Microphone capture + on-the-fly pitch detection.
 //
-// We sample the mic into an AnalyserNode, run autocorrelation on each frame,
-// quantize the result to the nearest semitone, and stream pitch samples to
-// the caller. On stop, the helper post-processes the sample stream into a
-// list of notes (start/length/pitch).
+// We sample the mic into an AnalyserNode and run a pitch detector on each
+// frame, then quantize the result to the nearest semitone and stream pitch
+// samples to the caller. On stop, the helper post-processes the sample stream
+// into a list of notes (start/length/pitch).
 //
-// The pitch detector is the textbook autocorrelation-with-parabolic-
-// -interpolation used in the WebAudio examples. Good enough for sung melodies
-// with mostly-stable pitch; not robust to noisy or polyphonic input.
+// Pitch detection uses the `pitchfinder` library. We're on YIN today (clean,
+// monophonic f0). The detector is factored out so we can swap in another
+// monophonic algorithm (Macleod, AMDF, ACF2+, DynamicWavelet) or a future
+// polyphonic detector for guitar without touching the capture loop.
+
+import { YIN } from "pitchfinder";
 
 export interface PitchSample {
   /** Detected MIDI note, or null for silence/unvoiced. */
@@ -53,6 +56,13 @@ export async function startRecording(): Promise<RecordHandle> {
   analyser.fftSize = FFT_SIZE;
   source.connect(analyser);
 
+  // YIN: probabilityThreshold gates out unvoiced frames internally. We still
+  // do our own RMS gate below so very quiet frames don't even run the detector.
+  const detectPitch = YIN({
+    sampleRate: ctx.sampleRate,
+    probabilityThreshold: 0.2,
+  });
+
   const buf = new Float32Array(analyser.fftSize);
   const samples: PitchSample[] = [];
   const t0 = ctx.currentTime;
@@ -63,8 +73,7 @@ export async function startRecording(): Promise<RecordHandle> {
   const tick = () => {
     if (stopped) return;
     analyser.getFloatTimeDomainData(buf);
-    const freq = autoCorrelate(buf, ctx.sampleRate);
-    const midi = freq > 0 ? Math.round(12 * Math.log2(freq / 440) + 69) : null;
+    const midi = detectMidi(buf, detectPitch);
     lastDetected = midi;
     samples.push({ midi, time: ctx.currentTime - t0 });
     raf = requestAnimationFrame(tick);
@@ -86,62 +95,19 @@ export async function startRecording(): Promise<RecordHandle> {
   };
 }
 
-// ---------- Autocorrelation ----------
+// ---------- Detection ----------
 
-// Standard time-domain autocorrelation pitch detector. Returns a frequency in
-// Hz, or -1 when the input is too quiet / unvoiced to score.
-function autoCorrelate(buf: Float32Array, sampleRate: number): number {
-  const SIZE = buf.length;
+type Detector = (buf: Float32Array) => number | null;
 
+function detectMidi(buf: Float32Array, detect: Detector): number | null {
   let sum = 0;
-  for (let i = 0; i < SIZE; i++) sum += buf[i] * buf[i];
-  const rms = Math.sqrt(sum / SIZE);
-  if (rms < MIN_RMS) return -1;
+  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+  const rms = Math.sqrt(sum / buf.length);
+  if (rms < MIN_RMS) return null;
 
-  // Trim quiet ends (everything below `threshold`).
-  const threshold = 0.2;
-  let r1 = 0, r2 = SIZE - 1;
-  for (let i = 0; i < SIZE / 2; i++) {
-    if (Math.abs(buf[i]) < threshold) { r1 = i; break; }
-  }
-  for (let i = 1; i < SIZE / 2; i++) {
-    if (Math.abs(buf[SIZE - i]) < threshold) { r2 = SIZE - i; break; }
-  }
-  const trimmed = buf.subarray(r1, r2);
-  const N = trimmed.length;
-  if (N < 64) return -1;
-
-  // Limit lag search to musically plausible periods (~ 75 Hz – 1500 Hz).
-  const maxLag = Math.min(N - 1, Math.floor(sampleRate / 75));
-  const minLag = Math.max(2, Math.floor(sampleRate / 1500));
-
-  // Compute autocorrelation only for lags in [minLag, maxLag].
-  const c = new Float32Array(maxLag + 1);
-  for (let lag = minLag; lag <= maxLag; lag++) {
-    let s = 0;
-    for (let i = 0; i < N - lag; i++) s += trimmed[i] * trimmed[i + lag];
-    c[lag] = s;
-  }
-
-  // Find the first descending region, then the global maximum after that.
-  let d = minLag;
-  while (d < maxLag && c[d] > c[d + 1]) d++;
-  let maxVal = -Infinity, maxPos = -1;
-  for (let i = d; i <= maxLag; i++) {
-    if (c[i] > maxVal) { maxVal = c[i]; maxPos = i; }
-  }
-  if (maxPos <= 0 || maxVal <= 0) return -1;
-
-  // Parabolic interpolation for sub-sample precision.
-  let T = maxPos;
-  if (maxPos > 0 && maxPos < maxLag) {
-    const x1 = c[maxPos - 1], x2 = c[maxPos], x3 = c[maxPos + 1];
-    const a = (x1 + x3 - 2 * x2) / 2;
-    const b = (x3 - x1) / 2;
-    if (a !== 0) T = T - b / (2 * a);
-  }
-
-  return sampleRate / T;
+  const freq = detect(buf);
+  if (freq == null || freq <= 0) return null;
+  return Math.round(12 * Math.log2(freq / 440) + 69);
 }
 
 // ---------- Sample → notes ----------
