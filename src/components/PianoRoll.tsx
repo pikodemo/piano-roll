@@ -298,11 +298,11 @@ export function PianoRoll() {
   const voiceById = new Map(project.voices.map((v) => [v.id, v]));
 
   return (
-    <div className="grid h-full" style={{ gridTemplateColumns: `${KEYBOARD_W}px 1fr`, gridTemplateRows: `${RULER_H}px 1fr` }}>
+    <div className="grid h-full min-h-0 min-w-0" style={{ gridTemplateColumns: `${KEYBOARD_W}px minmax(0, 1fr)`, gridTemplateRows: `${RULER_H}px minmax(0, 1fr)` }}>
       {/* Corner */}
       <div className="bg-gray-900 border-r border-b border-gray-700" />
       {/* Ruler */}
-      <div ref={rulerWrapRef} className="overflow-hidden border-b border-gray-700">
+      <div ref={rulerWrapRef} className="min-w-0 overflow-hidden border-b border-gray-700">
         <TimeRuler bars={project.bars} beatsPerBar={project.beatsPerBar} pixelsPerBeat={view.pixelsPerBeat} height={RULER_H} />
       </div>
       {/* Keyboard */}
@@ -316,7 +316,7 @@ export function PianoRoll() {
         />
       </div>
       {/* Grid */}
-      <div ref={scrollRef} className="overflow-auto" onScroll={onScroll}>
+      <div ref={scrollRef} className="min-h-0 min-w-0 overflow-auto" onScroll={onScroll}>
         <svg
           ref={gridSvgRef}
           width={contentW}
