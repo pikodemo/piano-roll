@@ -6,8 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import type { ScaleMode } from "@/lib/music";
 import { NOTE_NAMES, midiToName } from "@/lib/music";
 import { ProjectsMenu } from "./ProjectsMenu";
-import { getMIDIAccess, watchDevices, type MIDIDeviceInfo } from "@/lib/midi";
-import { startRecording, type RecordHandle } from "@/lib/audio-capture";
+import { getMIDIAccess, listInputs, subscribe as subscribeMIDI, watchDevices, type MIDIDeviceInfo } from "@/lib/midi";
+import { startRecording, type DetectedNote, type RecordHandle } from "@/lib/audio-capture";
 import { ExportModal } from "./ExportModal";
 
 const SNAP_OPTIONS: Array<{ label: string; value: number }> = [
@@ -21,6 +21,58 @@ const SNAP_OPTIONS: Array<{ label: string; value: number }> = [
 
 const MODES: ScaleMode[] = ["major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "harmonic_minor", "melodic_minor", "minor_pentatonic", "major_pentatonic", "blues"];
 
+type RecordSource = "mic" | "midi";
+type RecordedNote = DetectedNote & { velocity?: number };
+
+interface MIDIRecordHandle {
+  stop: () => { notes: RecordedNote[] };
+  currentMidi: () => number | null;
+}
+
+function startMIDIRecording(): MIDIRecordHandle {
+  const startedAt = performance.now();
+  const notes: RecordedNote[] = [];
+  const active = new Map<number, { startSec: number; velocity: number }>();
+  let lastMidi: number | null = null;
+
+  const nowSec = () => (performance.now() - startedAt) / 1000;
+  const finishNote = (midi: number, endSec: number) => {
+    const held = active.get(midi);
+    if (!held) return;
+    active.delete(midi);
+    notes.push({
+      midi,
+      startSec: held.startSec,
+      lengthSec: Math.max(0, endSec - held.startSec),
+      velocity: held.velocity,
+    });
+  };
+
+  const unsubscribe = subscribeMIDI((event) => {
+    const t = nowSec();
+    if (event.type === "noteOn") {
+      finishNote(event.note, t);
+      active.set(event.note, { startSec: t, velocity: event.velocity });
+      lastMidi = event.note;
+      return;
+    }
+    finishNote(event.note, t);
+    if (lastMidi === event.note) {
+      lastMidi = [...active.keys()].pop() ?? null;
+    }
+  });
+
+  return {
+    currentMidi: () => lastMidi,
+    stop: () => {
+      const endSec = nowSec();
+      unsubscribe();
+      for (const midi of active.keys()) finishNote(midi, endSec);
+      return { notes: notes.filter((n) => n.lengthSec > 0) };
+    },
+  };
+}
+
 function RecordButton() {
   const project = useStore((s) => s.project);
   const activeVoiceId = useStore((s) => s.activeVoiceId);
@@ -29,19 +81,48 @@ function RecordButton() {
   const setSelected = useStore((s) => s.setSelected);
 
   const [recording, setRecording] = useState(false);
+  const [source, setSource] = useState<RecordSource>("mic");
+  const [devices, setDevices] = useState<MIDIDeviceInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [livePitch, setLivePitch] = useState<number | null>(null);
   const handleRef = useRef<RecordHandle | null>(null);
+  const midiHandleRef = useRef<MIDIRecordHandle | null>(null);
   const startBeatRef = useRef(0);
   const tempoRef = useRef(120);
   const livePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const access = await getMIDIAccess();
+      if (!access || cancelled) return;
+      unsub = watchDevices((next) => {
+        setDevices(next);
+        if (next.length === 0) setSource("mic");
+      });
+    })();
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
+  }, []);
 
   async function start() {
     if (!project || !activeVoiceId) return;
     setError(null);
     try {
-      const handle = await startRecording();
-      handleRef.current = handle;
+      const handle = source === "midi"
+        ? (() => {
+            if (listInputs().length === 0) throw new Error("No MIDI input connected");
+            return startMIDIRecording();
+          })()
+        : await startRecording();
+      if (source === "midi") {
+        midiHandleRef.current = handle as MIDIRecordHandle;
+      } else {
+        handleRef.current = handle as RecordHandle;
+      }
       // Anchor the recording to the current playhead position so the notes
       // line up with whatever the user is overdubbing onto.
       startBeatRef.current = playheadBeat;
@@ -57,12 +138,15 @@ function RecordButton() {
   }
 
   async function stop() {
-    if (!handleRef.current || !project || !activeVoiceId) return;
+    if ((!handleRef.current && !midiHandleRef.current) || !project || !activeVoiceId) return;
     if (livePollRef.current) { clearInterval(livePollRef.current); livePollRef.current = null; }
     setRecording(false);
     setLivePitch(null);
-    const { notes: detected } = await handleRef.current.stop();
+    const detected: RecordedNote[] = handleRef.current
+      ? (await handleRef.current.stop()).notes
+      : midiHandleRef.current!.stop().notes;
     handleRef.current = null;
+    midiHandleRef.current = null;
     if (detected.length === 0) return;
     const beatSec = 60 / tempoRef.current;
     const snap = project.view.snap;
@@ -79,10 +163,10 @@ function RecordButton() {
         pitch: n.midi,
         start: Math.max(0, snappedStart),
         length: snappedLength,
-        velocity: 0.85,
+        velocity: n.velocity ?? 0.85,
       };
     });
-    const added = addNotes(created);
+    const added = addNotes(created, { label: source === "midi" ? "Record MIDI" : undefined });
     setSelected(added.map((n) => n.id));
   }
 
@@ -90,10 +174,24 @@ function RecordButton() {
   useEffect(() => () => {
     if (livePollRef.current) clearInterval(livePollRef.current);
     if (handleRef.current) handleRef.current.stop().catch(() => {});
+    if (midiHandleRef.current) midiHandleRef.current.stop();
   }, []);
 
   return (
     <div className="flex items-center gap-2">
+      {devices.length > 0 && (
+        <select
+          value={source}
+          onChange={(e) => setSource(e.target.value as RecordSource)}
+          disabled={recording}
+          className="rounded bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-100 disabled:opacity-60"
+          title={`Recording input: ${devices.map((d) => d.name).join(", ")}`}
+          aria-label="Recording input"
+        >
+          <option value="mic">Mic</option>
+          <option value="midi">MIDI</option>
+        </select>
+      )}
       <button
         onClick={() => recording ? void stop() : void start()}
         className={
@@ -101,17 +199,23 @@ function RecordButton() {
             ? "rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500"
             : "rounded bg-gray-800 px-3 py-1 text-xs font-semibold text-gray-100 hover:bg-gray-700"
         }
-        title={recording ? "Stop recording" : "Record from microphone (transcribes pitch to notes in the active voice)"}
+        title={
+          recording
+            ? "Stop recording"
+            : source === "midi"
+              ? "Record from the connected MIDI keyboard into the active voice"
+              : "Record from microphone (transcribes pitch to notes in the active voice)"
+        }
       >
         <span className={recording ? "inline-block h-2 w-2 rounded-full bg-red-200 mr-1 animate-pulse" : "inline-block h-2 w-2 rounded-full bg-red-500 mr-1"} />
-        {recording ? "Stop" : "Rec"}
+        {recording ? "Stop" : source === "midi" ? "Rec MIDI" : "Rec"}
       </button>
       {recording && (
         <span className="text-xs text-gray-400 font-mono">
           {livePitch != null ? midiToName(livePitch) : "—"}
         </span>
       )}
-      {error && <span className="text-xs text-red-400" title={error}>mic err</span>}
+      {error && <span className="text-xs text-red-400" title={error}>rec err</span>}
     </div>
   );
 }
