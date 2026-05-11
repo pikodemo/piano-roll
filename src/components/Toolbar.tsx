@@ -1,7 +1,7 @@
 "use client";
 
 import { useStore } from "@/lib/store";
-import { scheduleNotes } from "@/lib/audio";
+import { scheduleNotes, scheduleMetronome } from "@/lib/audio";
 import { useEffect, useRef, useState } from "react";
 import type { ScaleMode } from "@/lib/music";
 import { NOTE_NAMES, midiToName } from "@/lib/music";
@@ -347,7 +347,10 @@ export function Toolbar() {
   const setScale = useStore((s) => s.setScale);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
+  const layout = useStore((s) => s.layout);
+  const setLayout = useStore((s) => s.setLayout);
   const stopRef = useRef<(() => void) | null>(null);
+  const stopMetronomeRef = useRef<(() => void) | null>(null);
 
   // Space toggles play/stop.
   useEffect(() => {
@@ -369,6 +372,8 @@ export function Toolbar() {
     if (isPlaying) {
       stopRef.current?.();
       stopRef.current = null;
+      stopMetronomeRef.current?.();
+      stopMetronomeRef.current = null;
       setPlaying(false);
       setPlayhead(0);
       return;
@@ -393,8 +398,40 @@ export function Toolbar() {
           instrument: v?.instrument,
         };
       });
-    if (events.length === 0) return;
+    if (events.length === 0 && !layout.metronome) return;
     setPlaying(true);
+    if (layout.metronome) {
+      const totalBeats = project.bars * project.beatsPerBar;
+      stopMetronomeRef.current = scheduleMetronome(
+        project.tempo,
+        totalBeats,
+        project.beatsPerBar,
+        0.05,
+      );
+    }
+    if (events.length === 0) {
+      // Metronome-only playback: tick the playhead manually until the end.
+      const startMs = performance.now();
+      const beatMs = 60000 / project.tempo;
+      const totalBeats = project.bars * project.beatsPerBar;
+      let raf = 0;
+      const tick = () => {
+        const b = (performance.now() - startMs) / beatMs;
+        if (b >= totalBeats) {
+          stopMetronomeRef.current?.();
+          stopMetronomeRef.current = null;
+          stopRef.current = null;
+          setPlaying(false);
+          setPlayhead(0);
+          return;
+        }
+        setPlayhead(b);
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+      stopRef.current = () => cancelAnimationFrame(raf);
+      return;
+    }
     stopRef.current = scheduleNotes(
       events,
       project.tempo,
@@ -404,6 +441,8 @@ export function Toolbar() {
         setPlaying(false);
         setPlayhead(0);
         stopRef.current = null;
+        stopMetronomeRef.current?.();
+        stopMetronomeRef.current = null;
       },
     );
   }
@@ -421,6 +460,18 @@ export function Toolbar() {
         aria-label={isPlaying ? "Stop" : "Play"}
       >
         {isPlaying ? "■ Stop" : "▶ Play"}
+      </button>
+      <button
+        onClick={() => setLayout({ metronome: !layout.metronome })}
+        className={
+          layout.metronome
+            ? "rounded bg-amber-500 px-2 py-1 text-xs font-semibold text-gray-900 hover:bg-amber-400"
+            : "rounded bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-200 hover:bg-gray-700"
+        }
+        aria-pressed={layout.metronome}
+        title={layout.metronome ? "Metronome on — click to disable" : "Metronome off — click to enable"}
+      >
+        ♩ Metro
       </button>
       <RecordButton />
       <ExportButton />
