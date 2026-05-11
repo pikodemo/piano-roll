@@ -204,10 +204,22 @@ await page.click("button[title*='Export']");
 await page.waitForTimeout(150);
 const exportTitle = page.locator("h2", { hasText: "Export" });
 if ((await exportTitle.count()) === 0) fail("Export modal didn't open");
-// Default format = MusicXML; preview should contain the score-partwise tag.
+// Default format = MusicXML; sheet is rendered via OSMD as SVG inside a
+// dedicated container. Wait for the OSMD svg to appear (dynamic import + render
+// can take a moment on first open), then toggle to "XML source" view to check
+// the underlying body.
+const osmdSvg = page.locator("[id^='osmdSvgPage'], [id^='osmdCanvasPage'] svg").first();
+try {
+  await osmdSvg.waitFor({ timeout: 10000 });
+} catch {
+  fail("OSMD sheet did not render inside the export modal");
+}
+log("export modal: OSMD sheet rendered");
+await page.click("button[title*='Toggle between rendered sheet']");
+await page.waitForTimeout(100);
 const previewMusicXML = await page.locator("pre").first().innerText();
-if (!previewMusicXML.includes("score-partwise")) fail(`MusicXML preview missing tag. Got: ${previewMusicXML.slice(0, 300)}`);
-log("export modal: MusicXML preview rendered");
+if (!previewMusicXML.includes("score-partwise")) fail(`MusicXML XML-source preview missing tag. Got: ${previewMusicXML.slice(0, 300)}`);
+log("export modal: MusicXML XML source visible after toggle");
 // Switch to Tab.
 await page.click("input[type=radio] >> nth=1");
 await page.waitForTimeout(120);

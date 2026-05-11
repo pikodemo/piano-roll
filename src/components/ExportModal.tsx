@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import {
   exportFilename,
@@ -9,6 +9,7 @@ import {
   type ExportFormat,
   type ExportOptions,
 } from "@/lib/export";
+import type { OpenSheetMusicDisplay } from "opensheetmusicdisplay";
 
 const FORMAT_LABELS: Record<ExportFormat, string> = {
   musicxml: "Music sheet (MusicXML)",
@@ -37,6 +38,7 @@ function ExportModalContent({ project, onClose }: { project: NonNullable<ReturnT
   const [voiceIds, setVoiceIds] = useState<string[]>(() => project.voices.map((v) => v.id));
   const [selectionOnly, setSelectionOnly] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showXmlSource, setShowXmlSource] = useState(false);
 
   // Esc to close.
   useEffect(() => {
@@ -155,9 +157,13 @@ function ExportModalContent({ project, onClose }: { project: NonNullable<ReturnT
 
           {/* Right: preview + actions */}
           <div className="flex flex-col overflow-hidden">
-            <pre className="flex-1 overflow-auto bg-gray-950 px-4 py-3 font-mono text-xs leading-relaxed text-gray-200">
-              {body}
-            </pre>
+            {format === "musicxml" && !showXmlSource ? (
+              <MusicSheetPreview xml={body} />
+            ) : (
+              <pre className="flex-1 overflow-auto bg-gray-950 px-4 py-3 font-mono text-xs leading-relaxed text-gray-200">
+                {body}
+              </pre>
+            )}
             <div className="flex items-center justify-between border-t border-gray-700 bg-gray-900 px-4 py-2 text-xs">
               <span className="text-gray-500">
                 {format === "musicxml"
@@ -165,6 +171,15 @@ function ExportModalContent({ project, onClose }: { project: NonNullable<ReturnT
                   : "Use a monospace viewer for best alignment."}
               </span>
               <div className="flex items-center gap-2">
+                {format === "musicxml" && (
+                  <button
+                    onClick={() => setShowXmlSource((v) => !v)}
+                    className="rounded bg-gray-800 px-3 py-1 hover:bg-gray-700"
+                    title="Toggle between rendered sheet and raw MusicXML"
+                  >
+                    {showXmlSource ? "Sheet" : "XML source"}
+                  </button>
+                )}
                 <button
                   onClick={copy}
                   className="rounded bg-gray-800 px-3 py-1 hover:bg-gray-700"
@@ -182,6 +197,59 @@ function ExportModalContent({ project, onClose }: { project: NonNullable<ReturnT
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Renders MusicXML as an actual sheet using OpenSheetMusicDisplay. The lib is
+// ~500 KB gzipped so we dynamic-import it to keep it out of the initial bundle
+// — the modal is the only place it's used.
+function MusicSheetPreview({ xml }: { xml: string }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const target = containerRef.current;
+        if (!target) return;
+        if (!osmdRef.current) {
+          const { OpenSheetMusicDisplay } = await import("opensheetmusicdisplay");
+          if (cancelled) return;
+          osmdRef.current = new OpenSheetMusicDisplay(target, {
+            autoResize: true,
+            backend: "svg",
+            drawingParameters: "compact",
+          });
+        }
+        await osmdRef.current.load(xml);
+        if (cancelled) return;
+        osmdRef.current.render();
+        if (!cancelled) setError(null);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [xml]);
+
+  useEffect(() => {
+    return () => {
+      try { osmdRef.current?.clear?.(); } catch { /* OSMD may throw on already-unmounted */ }
+      osmdRef.current = null;
+    };
+  }, []);
+
+  return (
+    <div className="relative flex-1 overflow-auto bg-white">
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center p-4 text-sm text-red-600">
+          Render error: {error}
+        </div>
+      )}
+      <div ref={containerRef} className="p-4" />
     </div>
   );
 }
