@@ -275,15 +275,96 @@ const TAB_STRINGS = [
   { name: "e", openMidi: 64 }, // E4
 ];
 
-function pitchToTab(pitch: number): { stringIdx: number; fret: number } | null {
-  // Pick the highest string whose open pitch is ≤ the target and the fret
-  // ends up in [0, 24]. This puts most notes on a higher string with a low
-  // fret — easier to play.
-  for (let i = TAB_STRINGS.length - 1; i >= 0; i--) {
-    const fret = pitch - TAB_STRINGS[i].openMidi;
-    if (fret >= 0 && fret <= 24) return { stringIdx: i, fret };
+const MAX_FRET = 22;
+// Soft cap on chord spread (max fret - min fret across fretted notes). Hand
+// span of ~5 frets is comfortable; anything wider gets penalized but still
+// considered if it's the only option.
+const COMFORTABLE_SPREAD = 5;
+
+interface Fingering { stringIdx: number; fret: number }
+
+// Decide which (string, fret) to play each pitch in a simultaneous chord on.
+// Constraints:
+//   - one note per string at any given time
+//   - fret in [0, MAX_FRET]
+//   - pitches sorted low→high get strings in non-decreasing order (the
+//     conventional voicing — bass on lower strings, treble on top)
+// We brute-force assignments (≤ 6 notes, ≤ 6! = 720 perms, in practice far
+// fewer with the monotonic prune) and pick the one with the lowest weighted
+// cost over average fret, spread, and movement from the previous chord.
+function fingerChord(pitches: number[], prevCenter: number | null): Fingering[] {
+  if (pitches.length === 0) return [];
+  const unique = Array.from(new Set(pitches)).sort((a, b) => a - b);
+  // If more pitches than strings, keep the bottom + top extremes — bass
+  // anchor + melody — and drop the dense interior. (Better than chopping
+  // all-high or all-low.)
+  const useFor = unique.length > TAB_STRINGS.length ? pickSpread(unique, TAB_STRINGS.length) : unique;
+
+  const candidates: Fingering[][] = useFor.map((p) =>
+    TAB_STRINGS
+      .map((s, i) => ({ stringIdx: i, fret: p - s.openMidi }))
+      .filter((c) => c.fret >= 0 && c.fret <= MAX_FRET)
+      .sort((a, b) => a.fret - b.fret),
+  );
+
+  let best: { assn: Fingering[]; cost: number } | null = null;
+
+  const dfs = (idx: number, used: Set<number>, partial: Fingering[]) => {
+    if (idx === useFor.length) {
+      const fretted = partial.map((p) => p.fret).filter((f) => f > 0);
+      const minF = fretted.length ? Math.min(...fretted) : 0;
+      const maxF = fretted.length ? Math.max(...fretted) : 0;
+      const spread = maxF - minF;
+      const avgF = fretted.length ? fretted.reduce((a, b) => a + b, 0) / fretted.length : 0;
+      const move = prevCenter != null && fretted.length ? Math.abs(avgF - prevCenter) : 0;
+      const overSpread = Math.max(0, spread - COMFORTABLE_SPREAD);
+      const cost = avgF * 0.6 + spread * 1.5 + overSpread * 6 + move * 1.2;
+      if (!best || cost < best.cost) best = { assn: partial.slice(), cost };
+      return;
+    }
+    const minString = idx === 0 ? 0 : partial[idx - 1].stringIdx + 1;
+    for (const c of candidates[idx]) {
+      if (c.stringIdx < minString) continue;
+      if (used.has(c.stringIdx)) continue;
+      used.add(c.stringIdx);
+      partial.push(c);
+      dfs(idx + 1, used, partial);
+      partial.pop();
+      used.delete(c.stringIdx);
+    }
+  };
+
+  dfs(0, new Set(), []);
+
+  if (best) return (best as { assn: Fingering[] }).assn;
+
+  // No valid monotonic assignment — fall back to a per-note greedy pick on
+  // any free string. Rare (out-of-range pitches drop out entirely).
+  const fallback: Fingering[] = [];
+  const used = new Set<number>();
+  for (const p of useFor) {
+    const cands = TAB_STRINGS
+      .map((s, i) => ({ stringIdx: i, fret: p - s.openMidi }))
+      .filter((c) => c.fret >= 0 && c.fret <= MAX_FRET && !used.has(c.stringIdx))
+      .sort((a, b) => a.fret - b.fret);
+    if (cands[0]) {
+      fallback.push(cands[0]);
+      used.add(cands[0].stringIdx);
+    }
   }
-  return null;
+  return fallback;
+}
+
+// Pick `k` items from a sorted list, spread evenly across the range (always
+// includes both endpoints). Used when a chord has more notes than strings.
+function pickSpread<T>(arr: T[], k: number): T[] {
+  if (arr.length <= k) return arr.slice();
+  const out: T[] = [];
+  for (let i = 0; i < k; i++) {
+    const idx = Math.round((i * (arr.length - 1)) / (k - 1));
+    out.push(arr[idx]);
+  }
+  return out;
 }
 
 export function exportToTab(project: Project, opts: ExportOptions): string {
@@ -292,51 +373,64 @@ export function exportToTab(project: Project, opts: ExportOptions): string {
   const beatsPerBar = project.beatsPerBar;
   const colsPerBeat = Math.max(1, Math.round(1 / project.view.snap));
   const colsPerBar = beatsPerBar * colsPerBeat;
+  const totalCols = project.bars * beatsPerBar * colsPerBeat;
+
+  // Merge all selected voices into one stream of note onsets. Tab is a
+  // single-instrument notation, so polyphony across voices is treated as
+  // simultaneous notes on the guitar (one per string).
+  const onsetsByCol = new Map<number, number[]>();
+  let totalNotes = 0;
+  for (const v of voicesToInclude) {
+    for (const n of notesPerVoice.get(v.id) ?? []) {
+      const col = Math.round(n.start * colsPerBeat);
+      if (col < 0 || col >= totalCols) continue;
+      let arr = onsetsByCol.get(col);
+      if (!arr) { arr = []; onsetsByCol.set(col, arr); }
+      arr.push(n.pitch);
+      totalNotes++;
+    }
+  }
+
+  // Walk columns in time order, computing fingerings with continuity.
+  const grid: string[][] = TAB_STRINGS.map(() => Array.from({ length: totalCols }, () => "-"));
+  let prevCenter: number | null = null;
+  const sortedCols = Array.from(onsetsByCol.keys()).sort((a, b) => a - b);
+  for (const col of sortedCols) {
+    const fingerings = fingerChord(onsetsByCol.get(col)!, prevCenter);
+    for (const f of fingerings) grid[f.stringIdx][col] = String(f.fret);
+    const fretted = fingerings.map((f) => f.fret).filter((f) => f > 0);
+    if (fretted.length) prevCenter = fretted.reduce((a, b) => a + b, 0) / fretted.length;
+  }
 
   const blocks: string[] = [];
   blocks.push(`Project: ${project.name}    Tempo: ${project.tempo} BPM    ${beatsPerBar}/4`);
+  blocks.push(`Voices: ${voicesToInclude.map((v) => v.name).join(", ") || "(none)"}`);
+  blocks.push(`Standard tuning (EADGBe). All voices merged on one tab.`);
   blocks.push("");
 
-  for (const v of voicesToInclude) {
-    const notes = notesPerVoice.get(v.id) ?? [];
-    blocks.push(`-- ${v.name} (${v.instrument}) --`);
+  if (totalNotes === 0) {
+    blocks.push("(no notes)");
+    return blocks.join("\n");
+  }
 
-    if (notes.length === 0) {
-      blocks.push("(no notes)");
-      blocks.push("");
-      continue;
-    }
+  // Pad single-digit frets to two chars so columns align with two-digit frets.
+  const padCell = (s: string) => s.length === 1 ? s + "-" : s;
 
-    const totalBeats = project.bars * beatsPerBar;
-    const totalCols = totalBeats * colsPerBeat;
-
-    // string × column grid; each cell holds the fret string ("3", "12", "-")
-    const grid: string[][] = TAB_STRINGS.map(() => Array.from({ length: totalCols }, () => "-"));
-
-    for (const n of notes) {
-      const place = pitchToTab(n.pitch);
-      if (!place) continue;
-      const startCol = Math.round(n.start * colsPerBeat);
-      if (startCol < 0 || startCol >= totalCols) continue;
-      grid[place.stringIdx][startCol] = String(place.fret);
-    }
-
-    // Pad cells to a uniform width so columns line up. Two-digit frets need
-    // two characters; single-digit cells pad to two as well.
-    const cellWidth = 2;
-    const pad = (s: string) => s.length === 1 ? s + "-" : s;
-
-    // Render each string as a single line, with bar separators every colsPerBar.
+  // Wrap to fixed number of bars per system for readability.
+  const BARS_PER_SYSTEM = 4;
+  const stringCells = grid.map((row) => row.map(padCell));
+  for (let systemStart = 0; systemStart < project.bars; systemStart += BARS_PER_SYSTEM) {
+    const systemEndBar = Math.min(project.bars, systemStart + BARS_PER_SYSTEM);
+    blocks.push(`Bars ${systemStart + 1}–${systemEndBar}`);
     for (let s = TAB_STRINGS.length - 1; s >= 0; s--) {
-      const cells = grid[s].map(pad);
-      const bars: string[] = [];
-      for (let bar = 0; bar * colsPerBar < cells.length; bar++) {
-        bars.push(cells.slice(bar * colsPerBar, (bar + 1) * colsPerBar).join(""));
+      const cells = stringCells[s];
+      const segments: string[] = [];
+      for (let bar = systemStart; bar < systemEndBar; bar++) {
+        segments.push(cells.slice(bar * colsPerBar, (bar + 1) * colsPerBar).join(""));
       }
-      blocks.push(`${TAB_STRINGS[s].name}|${bars.join("|")}|`);
+      blocks.push(`${TAB_STRINGS[s].name}|${segments.join("|")}|`);
     }
     blocks.push("");
-    void cellWidth; // silence the lint
   }
 
   return blocks.join("\n");

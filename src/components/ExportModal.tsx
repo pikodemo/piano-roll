@@ -18,7 +18,7 @@ const FORMAT_LABELS: Record<ExportFormat, string> = {
 
 const FORMAT_HELP: Record<ExportFormat, string> = {
   musicxml: "Universal sheet-music format. Open in MuseScore, Sibelius, Finale, or import into Logic / GarageBand for printing/PDF/editing.",
-  tab: "Six-string standard tuning (E A D G B e). Each cell is one snap unit; bars separated by '|'. Best with monophonic voices.",
+  tab: "Six-string standard tuning (E A D G B e). All selected voices are merged onto one tab; string/fret assignments are picked to minimize hand movement.",
   jianpu: "Numbered notation. 1-7 = scale degrees Do-Ti, ' = octave up, , = octave down. Reads from the project's working scale (defaults to C major).",
 };
 
