@@ -9,6 +9,7 @@ import { pitchClass } from "@/lib/music";
 
 const KEYBOARD_W = 56;
 const RULER_H = 24;
+const H_SCROLLBAR_H = 18;
 const BLACK = new Set([1, 3, 6, 8, 10]);
 const RESIZE_PX = 6;
 
@@ -40,17 +41,71 @@ export function PianoRoll() {
   const rulerWrapRef = useRef<HTMLDivElement | null>(null);
   const kbWrapRef = useRef<HTMLDivElement | null>(null);
   const gridSvgRef = useRef<SVGSVGElement | null>(null);
+  const hScrollDragRef = useRef<{ startX: number; startLeft: number } | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
+  const [scrollMetrics, setScrollMetrics] = useState({ left: 0, clientWidth: 0, scrollWidth: 0 });
   // Where the next click would create a note (only used in draw mode, when
   // the pointer is over the grid and not over an existing note).
   const [hoverPlace, setHoverPlace] = useState<{ start: number; pitch: number; length: number } | null>(null);
 
+  const syncScrollState = useCallback((el: HTMLDivElement) => {
+    const next = {
+      left: el.scrollLeft,
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+    };
+    setScrollMetrics((prev) => (
+      prev.left === next.left &&
+      prev.clientWidth === next.clientWidth &&
+      prev.scrollWidth === next.scrollWidth
+        ? prev
+        : next
+    ));
+  }, []);
+
   // Sync scroll between the corner panes and the main grid.
-  const onScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const el = e.currentTarget;
+  const syncScrollPanes = useCallback((el: HTMLDivElement) => {
     if (rulerWrapRef.current) rulerWrapRef.current.scrollLeft = el.scrollLeft;
     if (kbWrapRef.current) kbWrapRef.current.scrollTop = el.scrollTop;
-  }, []);
+    syncScrollState(el);
+  }, [syncScrollState]);
+
+  const onScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    syncScrollPanes(e.currentTarget);
+  }, [syncScrollPanes]);
+
+  const setHorizontalScroll = useCallback((left: number) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollLeft = Math.max(0, Math.min(left, el.scrollWidth - el.clientWidth));
+    syncScrollPanes(el);
+  }, [syncScrollPanes]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    syncScrollPanes(el);
+
+    const update = () => syncScrollPanes(el);
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    if (gridSvgRef.current) observer.observe(gridSvgRef.current);
+    window.addEventListener("resize", update);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [
+    project?.id,
+    project?.bars,
+    project?.beatsPerBar,
+    project?.view.pixelsPerBeat,
+    project?.view.rowHeight,
+    project?.view.minPitch,
+    project?.view.maxPitch,
+    syncScrollPanes,
+  ]);
 
   // Auto-scroll keyboard to middle on first load.
   useEffect(() => {
@@ -296,9 +351,80 @@ export function PianoRoll() {
   }
 
   const voiceById = new Map(project.voices.map((v) => [v.id, v]));
+  const horizontalScrollMax = Math.max(0, scrollMetrics.scrollWidth - scrollMetrics.clientWidth);
+  const horizontalThumbWidth = scrollMetrics.scrollWidth > 0
+    ? Math.min(100, Math.max(8, (scrollMetrics.clientWidth / scrollMetrics.scrollWidth) * 100))
+    : 100;
+  const horizontalThumbLeft = horizontalScrollMax > 0
+    ? (scrollMetrics.left / horizontalScrollMax) * (100 - horizontalThumbWidth)
+    : 0;
+
+  function scrollFromTrackPointer(e: React.PointerEvent<HTMLDivElement>, startDrag: boolean) {
+    if (horizontalScrollMax <= 0) return;
+    const track = e.currentTarget;
+    const rect = track.getBoundingClientRect();
+    const thumbWidthPx = rect.width * (horizontalThumbWidth / 100);
+    const travelPx = Math.max(1, rect.width - thumbWidthPx);
+    const pointerX = e.clientX - rect.left;
+    const targetLeft = ((pointerX - thumbWidthPx / 2) / travelPx) * horizontalScrollMax;
+    const nextLeft = Math.max(0, Math.min(targetLeft, horizontalScrollMax));
+    setHorizontalScroll(nextLeft);
+    if (startDrag) hScrollDragRef.current = { startX: e.clientX, startLeft: nextLeft };
+  }
+
+  function onHorizontalScrollPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (horizontalScrollMax <= 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    if (e.target === e.currentTarget) {
+      scrollFromTrackPointer(e, true);
+    } else {
+      hScrollDragRef.current = { startX: e.clientX, startLeft: scrollMetrics.left };
+    }
+  }
+
+  function onHorizontalScrollPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const dragState = hScrollDragRef.current;
+    if (!dragState || horizontalScrollMax <= 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const thumbWidthPx = rect.width * (horizontalThumbWidth / 100);
+    const travelPx = Math.max(1, rect.width - thumbWidthPx);
+    const delta = ((e.clientX - dragState.startX) / travelPx) * horizontalScrollMax;
+    setHorizontalScroll(dragState.startLeft + delta);
+  }
+
+  function onHorizontalScrollPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    hScrollDragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+  }
+
+  function onHorizontalScrollKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (horizontalScrollMax <= 0) return;
+    const smallStep = view.pixelsPerBeat;
+    const largeStep = Math.max(smallStep, scrollMetrics.clientWidth * 0.8);
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      setHorizontalScroll(scrollMetrics.left - smallStep);
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      setHorizontalScroll(scrollMetrics.left + smallStep);
+    } else if (e.key === "PageUp") {
+      e.preventDefault();
+      setHorizontalScroll(scrollMetrics.left - largeStep);
+    } else if (e.key === "PageDown") {
+      e.preventDefault();
+      setHorizontalScroll(scrollMetrics.left + largeStep);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      setHorizontalScroll(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      setHorizontalScroll(horizontalScrollMax);
+    }
+  }
 
   return (
-    <div className="grid h-full min-h-0 min-w-0" style={{ gridTemplateColumns: `${KEYBOARD_W}px minmax(0, 1fr)`, gridTemplateRows: `${RULER_H}px minmax(0, 1fr)` }}>
+    <div className="grid h-full min-h-0 min-w-0" style={{ gridTemplateColumns: `${KEYBOARD_W}px minmax(0, 1fr)`, gridTemplateRows: `${RULER_H}px minmax(0, 1fr) ${H_SCROLLBAR_H}px` }}>
       {/* Corner */}
       <div className="bg-gray-900 border-r border-b border-gray-700" />
       {/* Ruler */}
@@ -316,7 +442,7 @@ export function PianoRoll() {
         />
       </div>
       {/* Grid */}
-      <div ref={scrollRef} className="min-h-0 min-w-0 overflow-auto" onScroll={onScroll}>
+      <div id="piano-roll-grid-scroll" ref={scrollRef} className="piano-roll-scroll min-h-0 min-w-0 overflow-x-hidden overflow-y-auto" onScroll={onScroll}>
         <svg
           ref={gridSvgRef}
           width={contentW}
@@ -427,6 +553,33 @@ export function PianoRoll() {
             <line x1={beatToPx(playheadBeat)} y1={0} x2={beatToPx(playheadBeat)} y2={contentH} stroke="#ef4444" strokeWidth={1.5} />
           )}
         </svg>
+      </div>
+      <div className="border-r border-t border-gray-700 bg-gray-900" />
+      <div className="min-w-0 border-t border-gray-700 bg-gray-900 px-1.5 py-1">
+        <div
+          role="scrollbar"
+          aria-label="Horizontal piano roll scroll"
+          aria-controls="piano-roll-grid-scroll"
+          aria-orientation="horizontal"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(horizontalScrollMax)}
+          aria-valuenow={Math.round(scrollMetrics.left)}
+          tabIndex={0}
+          className="relative h-2.5 cursor-pointer rounded-full border border-gray-700 bg-gray-950 outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+          onPointerDown={onHorizontalScrollPointerDown}
+          onPointerMove={onHorizontalScrollPointerMove}
+          onPointerUp={onHorizontalScrollPointerUp}
+          onPointerCancel={onHorizontalScrollPointerUp}
+          onKeyDown={onHorizontalScrollKeyDown}
+        >
+          <div
+            className="absolute bottom-0 top-0 cursor-grab rounded-full bg-gray-300 active:cursor-grabbing"
+            style={{
+              left: `${horizontalThumbLeft}%`,
+              width: `${horizontalThumbWidth}%`,
+            }}
+          />
+        </div>
       </div>
     </div>
   );

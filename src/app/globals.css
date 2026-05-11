@@ -29,3 +29,34 @@ html, body {
   height: 100%;
   margin: 0;
 }
+
+.piano-roll-scroll {
+  scrollbar-color: #9ca3af #111827;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.piano-roll-scroll::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+  background: #111827;
+}
+
+.piano-roll-scroll::-webkit-scrollbar-corner {
+  background: #111827;
+}
+
+.piano-roll-scroll::-webkit-scrollbar-track {
+  background: #111827;
+  border: 1px solid #374151;
+}
+
+.piano-roll-scroll::-webkit-scrollbar-thumb {
+  background: #9ca3af;
+  border: 3px solid #111827;
+  border-radius: 999px;
+}
+
+.piano-roll-scroll::-webkit-scrollbar-thumb:hover {
+  background: #d1d5db;
+}
