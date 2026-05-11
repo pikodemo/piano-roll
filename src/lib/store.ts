@@ -96,12 +96,14 @@ export interface UILayout {
   historyOpen: boolean;
   chatOpen: boolean;
   inspectorPos: "bottom" | "right";
+  metronome: boolean;
 }
 
 const DEFAULT_LAYOUT: UILayout = {
   historyOpen: false,
   chatOpen: true,
   inspectorPos: "bottom",
+  metronome: false,
 };
 
 const LAYOUT_KEY = "pianoroll-layout";

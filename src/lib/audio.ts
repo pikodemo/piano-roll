@@ -289,3 +289,37 @@ export function scheduleNotes(
     for (const h of handles) h.stop();
   };
 }
+
+// Schedule metronome clicks. Accented (higher-pitched) click on the first beat
+// of each bar, plain click on the rest. Returns a cancel function.
+export function scheduleMetronome(
+  bpm: number,
+  totalBeats: number,
+  beatsPerBar: number,
+  startOffsetSec = 0.05,
+): () => void {
+  const c = getCtx();
+  const start = c.currentTime + startOffsetSec;
+  const beatSec = 60 / bpm;
+  const oscs: OscillatorNode[] = [];
+  for (let i = 0; i < totalBeats; i++) {
+    const t0 = start + i * beatSec;
+    const accent = beatsPerBar > 0 && i % beatsPerBar === 0;
+    const osc = c.createOscillator();
+    const gain = c.createGain();
+    osc.type = "square";
+    osc.frequency.value = accent ? 1600 : 1000;
+    const peak = accent ? 0.22 : 0.14;
+    const dur = 0.04;
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(peak, t0 + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(gain).connect(c.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+    oscs.push(osc);
+  }
+  return () => {
+    for (const o of oscs) try { o.stop(); } catch { /* already stopped */ }
+  };
+}
