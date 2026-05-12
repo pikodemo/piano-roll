@@ -1,7 +1,7 @@
 "use client";
 
 import { useStore } from "@/lib/store";
-import { scheduleNotes, scheduleMetronome } from "@/lib/audio";
+import { scheduleNotes, scheduleMetronome, type ScheduledNote } from "@/lib/audio";
 import { useEffect, useRef, useState } from "react";
 import type { ScaleMode } from "@/lib/music";
 import { NOTE_NAMES, midiToName } from "@/lib/music";
@@ -367,20 +367,11 @@ export function Toolbar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, isPlaying]);
 
-  function toggle() {
-    if (!project) return;
-    if (isPlaying) {
-      stopRef.current?.();
-      stopRef.current = null;
-      stopMetronomeRef.current?.();
-      stopMetronomeRef.current = null;
-      setPlaying(false);
-      setPlayhead(0);
-      return;
-    }
+  function buildEvents(): ScheduledNote[] {
+    if (!project) return [];
     const soloed = project.voices.some((v) => v.soloed);
     const voiceById = new Map(project.voices.map((v) => [v.id, v]));
-    const events = project.notes
+    return project.notes
       .filter((n) => {
         const v = voiceById.get(n.voiceId);
         if (!v) return false;
@@ -398,13 +389,37 @@ export function Toolbar() {
           instrument: v?.instrument,
         };
       });
-    if (events.length === 0 && !layout.metronome) return;
-    setPlaying(true);
-    if (layout.metronome) {
-      const totalBeats = project.bars * project.beatsPerBar;
+  }
+
+  function stopAll() {
+    stopRef.current?.();
+    stopRef.current = null;
+    stopMetronomeRef.current?.();
+    stopMetronomeRef.current = null;
+  }
+
+  function startCycle() {
+    if (!project) return;
+    const events = buildEvents();
+    // Read latest layout state so toggling Loop / Metro mid-playback affects
+    // the next cycle without needing to restart manually.
+    const latestLayout = useStore.getState().layout;
+    if (events.length === 0 && !latestLayout.metronome) {
+      setPlaying(false);
+      setPlayhead(0);
+      return;
+    }
+    // Loop boundary is the end of the last note; falls back to the project
+    // length when there are no notes (metronome-only).
+    const lastNoteEnd = events.reduce((m, e) => Math.max(m, e.startBeat + e.lengthBeat), 0);
+    const projectBeats = project.bars * project.beatsPerBar;
+    const loopBeats = lastNoteEnd > 0 ? lastNoteEnd : projectBeats;
+
+    if (latestLayout.metronome) {
+      const metroBeats = latestLayout.loop ? Math.max(1, Math.ceil(loopBeats)) : projectBeats;
       stopMetronomeRef.current = scheduleMetronome(
         project.tempo,
-        totalBeats,
+        metroBeats,
         project.beatsPerBar,
         0.05,
       );
@@ -413,16 +428,17 @@ export function Toolbar() {
       // Metronome-only playback: tick the playhead manually until the end.
       const startMs = performance.now();
       const beatMs = 60000 / project.tempo;
-      const totalBeats = project.bars * project.beatsPerBar;
       let raf = 0;
       const tick = () => {
         const b = (performance.now() - startMs) / beatMs;
-        if (b >= totalBeats) {
-          stopMetronomeRef.current?.();
-          stopMetronomeRef.current = null;
-          stopRef.current = null;
-          setPlaying(false);
-          setPlayhead(0);
+        if (b >= loopBeats) {
+          stopAll();
+          if (useStore.getState().layout.loop) {
+            startCycle();
+          } else {
+            setPlaying(false);
+            setPlayhead(0);
+          }
           return;
         }
         setPlayhead(b);
@@ -438,13 +454,27 @@ export function Toolbar() {
       0.05,
       (b) => setPlayhead(b),
       () => {
-        setPlaying(false);
-        setPlayhead(0);
-        stopRef.current = null;
-        stopMetronomeRef.current?.();
-        stopMetronomeRef.current = null;
+        stopAll();
+        if (useStore.getState().layout.loop) {
+          startCycle();
+        } else {
+          setPlaying(false);
+          setPlayhead(0);
+        }
       },
     );
+  }
+
+  function toggle() {
+    if (!project) return;
+    if (isPlaying) {
+      stopAll();
+      setPlaying(false);
+      setPlayhead(0);
+      return;
+    }
+    setPlaying(true);
+    startCycle();
   }
 
   if (!project) return null;
@@ -472,6 +502,18 @@ export function Toolbar() {
         title={layout.metronome ? "Metronome on — click to disable" : "Metronome off — click to enable"}
       >
         ♩ Metro
+      </button>
+      <button
+        onClick={() => setLayout({ loop: !layout.loop })}
+        className={
+          layout.loop
+            ? "rounded bg-sky-500 px-2 py-1 text-xs font-semibold text-gray-900 hover:bg-sky-400"
+            : "rounded bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-200 hover:bg-gray-700"
+        }
+        aria-pressed={layout.loop}
+        title={layout.loop ? "Loop on — playback restarts after the last note" : "Loop off — click to repeat playback from start to last note"}
+      >
+        ↻ Loop
       </button>
       <RecordButton />
       <ExportButton />
