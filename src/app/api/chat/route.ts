@@ -24,6 +24,8 @@ import {
   type ToolExecutionContext,
   type ToolName,
 } from "@/lib/agent-tools";
+import { addUsageCost, costAnthropicUsage, emptyUsageCost, type AnthropicUsage } from "@/lib/anthropic-costs";
+import { recordLlmUsage, verifyFirebaseIdToken } from "@/lib/firebase-admin";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -91,6 +93,19 @@ export async function POST(req: Request) {
     );
   }
 
+  let uid: string;
+  try {
+    const decodedToken = await verifyFirebaseIdToken(req.headers.get("authorization"));
+    uid = decodedToken.uid;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Authentication failed.";
+    const status = message.includes("Firebase Admin credentials") ? 500 : 401;
+    return Response.json(
+      { error: status === 401 ? "unauthorized" : "firebase_admin_not_configured", message },
+      { status },
+    );
+  }
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return Response.json(
@@ -141,6 +156,7 @@ export async function POST(req: Request) {
         // updated project snapshot after each tool call so the UI can re-render
         // the roll while the agent is still running.
         let stopReason: string | null = null;
+        let totalUsage = emptyUsageCost(body.model);
         for (let turn = 0; turn < 8; turn++) {
           const apiStream = client.messages.stream({
             model: body.model,
@@ -166,6 +182,10 @@ export async function POST(req: Request) {
           }
 
           const finalMessage = await apiStream.finalMessage();
+          totalUsage = addUsageCost(
+            totalUsage,
+            costAnthropicUsage(body.model, finalMessage.usage as AnthropicUsage),
+          );
           messages.push({ role: "assistant", content: finalMessage.content });
           stopReason = finalMessage.stop_reason ?? null;
 
@@ -202,6 +222,10 @@ export async function POST(req: Request) {
           messages.push({ role: "user", content: toolResults });
         }
 
+        if (totalUsage.costUsd > 0) {
+          await recordLlmUsage(uid, totalUsage);
+          send({ type: "usage", usage: totalUsage });
+        }
         send({ type: "done", stop_reason: stopReason ?? "end_turn" });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);

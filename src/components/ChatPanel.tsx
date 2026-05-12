@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { User } from "firebase/auth";
+import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
+import { doc, onSnapshot } from "firebase/firestore";
+import { auth, db, googleProvider } from "@/lib/firebase";
 import { useStore, type ChatMessage } from "@/lib/store";
 
 const MODELS = [
@@ -10,6 +14,17 @@ const MODELS = [
 ];
 
 function uid(): string { return Math.random().toString(36).slice(2, 10); }
+
+interface UsageSummary {
+  totalCostUsd: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+}
+
+function formatUsd(value: number): string {
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
+}
 
 export function ChatPanel() {
   const project = useStore((s) => s.project);
@@ -28,7 +43,33 @@ export function ChatPanel() {
 
   const [model, setModel] = useState(MODELS[0].id);
   const [input, setInput] = useState("");
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    return onAuthStateChanged(auth, (user) => {
+      setAuthUser(user);
+      if (!user) setUsage(null);
+      setAuthReady(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!authUser) return;
+    return onSnapshot(doc(db, "users", authUser.uid, "usage", "llm"), (snapshot) => {
+      const data = snapshot.data() as Partial<UsageSummary> | undefined;
+      setUsage({
+        totalCostUsd: data?.totalCostUsd ?? 0,
+        totalInputTokens: data?.totalInputTokens ?? 0,
+        totalOutputTokens: data?.totalOutputTokens ?? 0,
+      });
+    }, (err) => {
+      setChatError(err.message);
+    });
+  }, [authUser, setChatError]);
 
   // Auto-scroll the message list as content streams in.
   useEffect(() => {
@@ -38,7 +79,7 @@ export function ChatPanel() {
 
   async function send() {
     const text = input.trim();
-    if (!text || busy || !project) return;
+    if (!text || busy || !project || !authUser) return;
     setInput("");
     setChatError(null);
 
@@ -50,9 +91,13 @@ export function ChatPanel() {
     beginAgentTurn();
 
     try {
+      const idToken = await authUser.getIdToken();
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({
           model,
           // Send full chat history (text only — tool calls don't go back to
@@ -131,9 +176,43 @@ export function ChatPanel() {
         case "error":
           setChatError(event.message as string);
           break;
+        case "usage": {
+          const next = event.usage as { costUsd?: number } | undefined;
+          const costUsd = next?.costUsd;
+          if (typeof costUsd === "number" && costUsd > 0) {
+            patchLastAssistant((cur) => ({
+              text: cur.text + `${cur.text ? "\n\n" : ""}_Usage: ${formatUsd(costUsd)} for this turn._`,
+            }));
+          }
+          break;
+        }
         case "done":
           break;
       }
+    }
+  }
+
+  async function signIn() {
+    setAuthBusy(true);
+    setChatError(null);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function signOutOfChat() {
+    setAuthBusy(true);
+    setChatError(null);
+    try {
+      await signOut(auth);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAuthBusy(false);
     }
   }
 
@@ -147,13 +226,20 @@ export function ChatPanel() {
   return (
     <div className="flex h-full flex-col bg-gray-900 text-gray-100">
       <div className="flex items-center justify-between border-b border-gray-700 px-3 py-2 text-sm">
-        <span className="font-semibold">Chat</span>
+        <div className="min-w-0">
+          <div className="font-semibold">Chat</div>
+          {authUser && (
+            <div className="truncate text-[11px] text-gray-400">
+              {usage ? `${formatUsd(usage.totalCostUsd)} used` : "Loading usage..."}
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-1">
           <select
             value={model}
             onChange={(e) => setModel(e.target.value)}
             className="rounded bg-gray-800 px-2 py-1 text-xs"
-            disabled={busy}
+            disabled={busy || !authUser}
           >
             {MODELS.map((m) => (
               <option key={m.id} value={m.id}>{m.label}</option>
@@ -168,6 +254,35 @@ export function ChatPanel() {
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 text-sm">
+        {authReady && !authUser && (
+          <div className="rounded border border-gray-700 bg-gray-800/60 px-3 py-3 text-sm text-gray-300">
+            <p className="font-semibold text-gray-100">Sign in to use the LLM</p>
+            <p className="mt-1 text-xs leading-relaxed text-gray-400">
+              Google sign-in unlocks the agent and lets Firestore track your Anthropic usage cost.
+            </p>
+            <button
+              onClick={signIn}
+              disabled={authBusy}
+              className="mt-3 rounded bg-white px-3 py-1.5 text-xs font-semibold text-gray-950 hover:bg-gray-200 disabled:opacity-50"
+            >
+              {authBusy ? "Opening..." : "Sign in with Google"}
+            </button>
+          </div>
+        )}
+        {authUser && (
+          <div className="mb-3 flex items-center justify-between gap-2 rounded bg-gray-800/50 px-2 py-1.5 text-xs text-gray-400">
+            <span className="min-w-0 truncate">
+              Signed in as <span className="text-gray-200">{authUser.displayName || authUser.email}</span>
+            </span>
+            <button
+              onClick={signOutOfChat}
+              disabled={authBusy || busy}
+              className="flex-shrink-0 rounded px-2 py-1 text-gray-300 hover:bg-gray-700 disabled:opacity-50"
+            >
+              Sign out
+            </button>
+          </div>
+        )}
         {messages.length === 0 && (
           <div className="rounded bg-gray-800/60 px-3 py-2 leading-relaxed text-gray-400">
             <p className="text-gray-200 font-semibold">Try asking:</p>
@@ -179,7 +294,7 @@ export function ChatPanel() {
             </ul>
             <p className="mt-2 text-xs">
               The agent can read and edit the roll. You&rsquo;ll see notes appear/move as it works.
-              Set <code className="text-gray-200">ANTHROPIC_API_KEY</code> on the server first.
+              Sign in first; the server also needs <code className="text-gray-200">ANTHROPIC_API_KEY</code> and Firebase Admin credentials.
             </p>
           </div>
         )}
@@ -198,14 +313,14 @@ export function ChatPanel() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKey}
           rows={3}
-          placeholder={busy ? "Working…" : "Ask the agent (Enter to send, Shift+Enter for newline)"}
+          placeholder={!authUser ? "Sign in to use the agent" : busy ? "Working…" : "Ask the agent (Enter to send, Shift+Enter for newline)"}
           className="w-full resize-none rounded bg-gray-800 px-2 py-1 text-sm text-gray-100 placeholder-gray-500 disabled:opacity-50"
-          disabled={busy || !project}
+          disabled={busy || !project || !authUser}
         />
         <div className="mt-1 flex justify-end">
           <button
             onClick={send}
-            disabled={busy || !input.trim() || !project}
+            disabled={busy || !input.trim() || !project || !authUser}
             className="rounded bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
           >
             Send

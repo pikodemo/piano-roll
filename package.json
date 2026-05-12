@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
+    "firebase": "^12.13.0",
+    "firebase-admin": "^13.9.0",
     "idb": "^8.0.3",
     "next": "16.2.6",
     "opensheetmusicdisplay": "^1.9.9",
