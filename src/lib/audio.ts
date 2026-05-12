@@ -15,6 +15,10 @@ function getCtx(): AudioContext {
   return ctx;
 }
 
+export function getAudioStartTime(startOffsetSec = 0.05): number {
+  return getCtx().currentTime + startOffsetSec;
+}
+
 function midiToFreq(midi: number): number {
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
@@ -243,9 +247,10 @@ export function scheduleNotes(
   startOffsetSec = 0.05,
   onTick?: (currentBeat: number) => void,
   onEnd?: () => void,
+  startAtSec?: number,
 ): () => void {
   const c = getCtx();
-  const start = c.currentTime + startOffsetSec;
+  const start = startAtSec ?? c.currentTime + startOffsetSec;
   const beatSec = 60 / bpm;
   const handles: VoiceHandle[] = [];
   let endTime = 0;
@@ -297,29 +302,72 @@ export function scheduleMetronome(
   totalBeats: number,
   beatsPerBar: number,
   startOffsetSec = 0.05,
+  startAtSec?: number,
 ): () => void {
   const c = getCtx();
-  const start = c.currentTime + startOffsetSec;
+  const start = startAtSec ?? c.currentTime + startOffsetSec;
   const beatSec = 60 / bpm;
   const oscs: OscillatorNode[] = [];
   for (let i = 0; i < totalBeats; i++) {
     const t0 = start + i * beatSec;
-    const accent = beatsPerBar > 0 && i % beatsPerBar === 0;
-    const osc = c.createOscillator();
-    const gain = c.createGain();
-    osc.type = "square";
-    osc.frequency.value = accent ? 1600 : 1000;
-    const peak = accent ? 0.22 : 0.14;
-    const dur = 0.04;
-    gain.gain.setValueAtTime(0, t0);
-    gain.gain.linearRampToValueAtTime(peak, t0 + 0.002);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.connect(gain).connect(c.destination);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.02);
-    oscs.push(osc);
+    oscs.push(scheduleMetronomeClick(c, i, beatsPerBar, t0));
   }
   return () => {
     for (const o of oscs) try { o.stop(); } catch { /* already stopped */ }
   };
+}
+
+export function startMetronome(
+  bpm: number,
+  beatsPerBar: number,
+  startOffsetSec = 0.05,
+  startAtSec?: number,
+): () => void {
+  const c = getCtx();
+  const start = startAtSec ?? c.currentTime + startOffsetSec;
+  const beatSec = 60 / bpm;
+  const scheduleAheadSec = 0.12;
+  const pollMs = 25;
+  const oscs: OscillatorNode[] = [];
+  let nextBeat = 0;
+
+  const tick = () => {
+    const earliestBeat = Math.max(0, Math.floor((c.currentTime - start) / beatSec));
+    nextBeat = Math.max(nextBeat, earliestBeat);
+    const horizon = c.currentTime + scheduleAheadSec;
+    while (start + nextBeat * beatSec <= horizon) {
+      const t0 = start + nextBeat * beatSec;
+      oscs.push(scheduleMetronomeClick(c, nextBeat, beatsPerBar, t0));
+      nextBeat += 1;
+    }
+  };
+
+  tick();
+  const timer = setInterval(tick, pollMs);
+  return () => {
+    clearInterval(timer);
+    for (const o of oscs) try { o.stop(); } catch { /* already stopped */ }
+  };
+}
+
+function scheduleMetronomeClick(
+  c: AudioContext,
+  beatIndex: number,
+  beatsPerBar: number,
+  t0: number,
+): OscillatorNode {
+  const accent = beatsPerBar > 0 && beatIndex % beatsPerBar === 0;
+  const osc = c.createOscillator();
+  const gain = c.createGain();
+  osc.type = "square";
+  osc.frequency.value = accent ? 1600 : 1000;
+  const peak = accent ? 0.22 : 0.14;
+  const dur = 0.04;
+  gain.gain.setValueAtTime(0, t0);
+  gain.gain.linearRampToValueAtTime(peak, t0 + 0.002);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(gain).connect(c.destination);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.02);
+  return osc;
 }
