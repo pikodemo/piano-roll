@@ -1,7 +1,7 @@
 "use client";
 
 import { useStore } from "@/lib/store";
-import { scheduleNotes, scheduleMetronome, type ScheduledNote } from "@/lib/audio";
+import { getAudioStartTime, scheduleNotes, scheduleMetronome, startMetronome, type ScheduledNote } from "@/lib/audio";
 import { useEffect, useRef, useState } from "react";
 import type { ScaleMode } from "@/lib/music";
 import { NOTE_NAMES, midiToName } from "@/lib/music";
@@ -79,6 +79,7 @@ function RecordButton() {
   const playheadBeat = useStore((s) => s.playheadBeat);
   const addNotes = useStore((s) => s.addNotes);
   const setSelected = useStore((s) => s.setSelected);
+  const layout = useStore((s) => s.layout);
 
   const [recording, setRecording] = useState(false);
   const [source, setSource] = useState<RecordSource>("mic");
@@ -90,6 +91,9 @@ function RecordButton() {
   const startBeatRef = useRef(0);
   const tempoRef = useRef(120);
   const livePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopMetronomeRef = useRef<(() => void) | null>(null);
+  const recordTempo = project?.tempo;
+  const recordBeatsPerBar = project?.beatsPerBar;
 
   useEffect(() => {
     let unsub: (() => void) | null = null;
@@ -140,6 +144,8 @@ function RecordButton() {
   async function stop() {
     if ((!handleRef.current && !midiHandleRef.current) || !project || !activeVoiceId) return;
     if (livePollRef.current) { clearInterval(livePollRef.current); livePollRef.current = null; }
+    stopMetronomeRef.current?.();
+    stopMetronomeRef.current = null;
     setRecording(false);
     setLivePitch(null);
     const detected: RecordedNote[] = handleRef.current
@@ -171,8 +177,23 @@ function RecordButton() {
   }
 
   // Cleanup if the component unmounts mid-recording.
+  useEffect(() => {
+    if (!recording || recordTempo == null || recordBeatsPerBar == null) return;
+    tempoRef.current = recordTempo;
+    stopMetronomeRef.current?.();
+    stopMetronomeRef.current = null;
+    if (!layout.metronome) return;
+    const startAt = getAudioStartTime(0.05);
+    stopMetronomeRef.current = startMetronome(recordTempo, recordBeatsPerBar, 0.05, startAt);
+    return () => {
+      stopMetronomeRef.current?.();
+      stopMetronomeRef.current = null;
+    };
+  }, [layout.metronome, recordBeatsPerBar, recordTempo, recording]);
+
   useEffect(() => () => {
     if (livePollRef.current) clearInterval(livePollRef.current);
+    stopMetronomeRef.current?.();
     if (handleRef.current) handleRef.current.stop().catch(() => {});
     if (midiHandleRef.current) midiHandleRef.current.stop();
   }, []);
@@ -415,22 +436,25 @@ export function Toolbar() {
     const projectBeats = project.bars * project.beatsPerBar;
     const loopBeats = lastNoteEnd > 0 ? lastNoteEnd : projectBeats;
 
+    const startOffsetSec = 0.05;
+    const startAt = getAudioStartTime(startOffsetSec);
     if (latestLayout.metronome) {
       const metroBeats = latestLayout.loop ? Math.max(1, Math.ceil(loopBeats)) : projectBeats;
       stopMetronomeRef.current = scheduleMetronome(
         project.tempo,
         metroBeats,
         project.beatsPerBar,
-        0.05,
+        startOffsetSec,
+        startAt,
       );
     }
     if (events.length === 0) {
       // Metronome-only playback: tick the playhead manually until the end.
-      const startMs = performance.now();
+      const startMs = performance.now() + startOffsetSec * 1000;
       const beatMs = 60000 / project.tempo;
       let raf = 0;
       const tick = () => {
-        const b = (performance.now() - startMs) / beatMs;
+        const b = Math.max(0, (performance.now() - startMs) / beatMs);
         if (b >= loopBeats) {
           stopAll();
           if (useStore.getState().layout.loop) {
@@ -462,6 +486,7 @@ export function Toolbar() {
           setPlayhead(0);
         }
       },
+      startAt,
     );
   }
 
