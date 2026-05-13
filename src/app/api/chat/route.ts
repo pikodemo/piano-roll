@@ -93,16 +93,14 @@ export async function POST(req: Request) {
     );
   }
 
-  let uid: string;
+  let authContext: Awaited<ReturnType<typeof verifyFirebaseIdToken>>;
   try {
-    const decodedToken = await verifyFirebaseIdToken(req.headers.get("authorization"));
-    uid = decodedToken.uid;
+    authContext = await verifyFirebaseIdToken(req.headers.get("authorization"));
   } catch (err) {
     const message = err instanceof Error ? err.message : "Authentication failed.";
-    const status = message.includes("Firebase Admin credentials") ? 500 : 401;
     return Response.json(
-      { error: status === 401 ? "unauthorized" : "firebase_admin_not_configured", message },
-      { status },
+      { error: "unauthorized", message },
+      { status: 401 },
     );
   }
 
@@ -223,8 +221,13 @@ export async function POST(req: Request) {
         }
 
         if (totalUsage.costUsd > 0) {
-          await recordLlmUsage(uid, totalUsage);
-          send({ type: "usage", usage: totalUsage });
+          try {
+            await recordLlmUsage(authContext, totalUsage);
+            send({ type: "usage", usage: totalUsage });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            send({ type: "usage", usage: totalUsage, trackingError: message });
+          }
         }
         send({ type: "done", stop_reason: stopReason ?? "end_turn" });
       } catch (err: unknown) {
