@@ -47,12 +47,16 @@ export function ChatPanel() {
   const [authReady, setAuthReady] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
+  const [usageUnavailable, setUsageUnavailable] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (user) => {
       setAuthUser(user);
-      if (!user) setUsage(null);
+      if (!user) {
+        setUsage(null);
+        setUsageUnavailable(false);
+      }
       setAuthReady(true);
     });
   }, []);
@@ -66,10 +70,11 @@ export function ChatPanel() {
         totalInputTokens: data?.totalInputTokens ?? 0,
         totalOutputTokens: data?.totalOutputTokens ?? 0,
       });
-    }, (err) => {
-      setChatError(err.message);
+      setUsageUnavailable(false);
+    }, () => {
+      setUsageUnavailable(true);
     });
-  }, [authUser, setChatError]);
+  }, [authUser]);
 
   // Auto-scroll the message list as content streams in.
   useEffect(() => {
@@ -177,9 +182,18 @@ export function ChatPanel() {
           setChatError(event.message as string);
           break;
         case "usage": {
-          const next = event.usage as { costUsd?: number } | undefined;
+          const next = event.usage as {
+            costUsd?: number;
+            inputTokens?: number;
+            outputTokens?: number;
+          } | undefined;
           const costUsd = next?.costUsd;
           if (typeof costUsd === "number" && costUsd > 0) {
+            setUsage((cur) => ({
+              totalCostUsd: (cur?.totalCostUsd ?? 0) + costUsd,
+              totalInputTokens: (cur?.totalInputTokens ?? 0) + (next?.inputTokens ?? 0),
+              totalOutputTokens: (cur?.totalOutputTokens ?? 0) + (next?.outputTokens ?? 0),
+            }));
             patchLastAssistant((cur) => ({
               text: cur.text + `${cur.text ? "\n\n" : ""}_Usage: ${formatUsd(costUsd)} for this turn._`,
             }));
@@ -230,7 +244,9 @@ export function ChatPanel() {
           <div className="font-semibold">Chat</div>
           {authUser && (
             <div className="truncate text-[11px] text-gray-400">
-              {usage ? `${formatUsd(usage.totalCostUsd)} used` : "Loading usage..."}
+              {usage
+                ? `${formatUsd(usage.totalCostUsd)} used${usageUnavailable ? " this session" : ""}`
+                : usageUnavailable ? "Usage sync unavailable" : "Loading usage..."}
             </div>
           )}
         </div>
